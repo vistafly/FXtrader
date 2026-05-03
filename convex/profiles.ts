@@ -18,7 +18,7 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { ConvexError, v } from "convex/values";
 
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +76,48 @@ export const createProfile = mutation({
 
     const now = Date.now();
     return await ctx.db.insert("profiles", {
+      userId,
+      displayName,
+      displayNameLower,
+      createdAt: now,
+      lastDisplayNameChangeAt: now,
+    });
+  },
+});
+
+// Internal-only — invoked from convex/auth.ts's afterUserCreatedOrUpdated
+// callback to write the profile row atomically with auth user creation.
+// Eliminates the WebSocket auth-refresh race that broke the v2.1 client-side
+// flow. Validation already happened in Password.profile() so we just check
+// idempotency + uniqueness here.
+export const createProfileForUser = internalMutation({
+  args: {
+    userId: v.id("users"),
+    displayName: v.string(),
+  },
+  handler: async (ctx, { userId, displayName }) => {
+    const existing = await ctx.db
+      .query("profiles")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (existing) return;
+
+    const displayNameLower = displayName.toLowerCase();
+    const conflict = await ctx.db
+      .query("profiles")
+      .withIndex("by_displayNameLower", (q) =>
+        q.eq("displayNameLower", displayNameLower),
+      )
+      .unique();
+    if (conflict) {
+      // Race: name was free at form-validation time, taken by the time we
+      // tried to insert. Leave profile uncreated; /signup recovery mode
+      // (authed but no profile) will prompt the user to pick a new name.
+      return;
+    }
+
+    const now = Date.now();
+    await ctx.db.insert("profiles", {
       userId,
       displayName,
       displayNameLower,

@@ -56,28 +56,36 @@ export default function SignUpPage() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      if (!recoveryMode) {
-        // Fresh signup: create auth user first.
-        await signIn("password", { email, password, flow: "signUp" });
-      }
-      try {
+      if (recoveryMode) {
+        // Authed user with no profile (e.g. left over from an earlier
+        // failed signup before the server-side flow shipped). Use the
+        // explicit createProfile mutation since user creation already
+        // happened.
         await createProfile({ displayName });
         toast.success(`Welcome, @${displayName}`);
         router.replace("/");
-      } catch (err) {
-        // Auth created but profile creation failed (likely taken name).
-        // Stay on /signup in recovery mode so they can pick a new name
-        // without re-creating the auth row.
-        const msg =
-          err instanceof ConvexError
-            ? String(err.data ?? "Couldn't set display name")
-            : err instanceof Error
-              ? err.message
-              : "Couldn't set display name";
-        toast.error(msg);
+      } else {
+        // Fresh signup. displayName flows through Password.profile() and
+        // is written to the `profiles` table atomically by the
+        // afterUserCreatedOrUpdated callback in convex/auth.ts. No
+        // separate createProfile call needed (and would race with the
+        // WebSocket auth refresh anyway).
+        await signIn("password", {
+          email,
+          password,
+          displayName,
+          flow: "signUp",
+        });
+        toast.success(`Welcome, @${displayName}`);
+        router.replace("/");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Sign-up failed";
+      const msg =
+        err instanceof ConvexError
+          ? String(err.data ?? "Sign-up failed")
+          : err instanceof Error
+            ? err.message
+            : "Sign-up failed";
       toast.error(msg);
     } finally {
       setSubmitting(false);
