@@ -4,15 +4,18 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth } from "convex/react";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { validateNextParam } from "@/lib/auth/nextParam";
 
 export default function SignInPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = validateNextParam(searchParams.get("next"));
   const { isAuthenticated } = useConvexAuth();
   const { signIn } = useAuthActions();
 
@@ -20,10 +23,11 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  if (isAuthenticated) {
-    router.replace("/");
-    return null;
-  }
+  useEffect(() => {
+    if (isAuthenticated) router.replace(next);
+  }, [isAuthenticated, next, router]);
+
+  if (isAuthenticated) return null;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,10 +39,9 @@ export default function SignInPage() {
       // from cookies. With client-side navigation the existing client persists
       // and useConvexAuth doesn't always pick up the freshly-set JWT, leaving
       // the UI in anon state until next manual reload.
-      window.location.href = "/";
+      window.location.href = next;
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Sign-in failed";
+      const msg = err instanceof Error ? err.message : "Sign-in failed";
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -51,13 +54,12 @@ export default function SignInPage() {
         href="/"
         className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3 w-3" /> Dashboard
+        <ArrowLeft className="h-3 w-3" /> Home
       </Link>
       <header className="space-y-1">
         <h1 className="text-3xl font-semibold tracking-tight">Sign in</h1>
         <p className="text-sm text-muted-foreground">
-          Sign in to rejoin multiplayer battles. Single-player keeps working
-          without an account.
+          Sign in to access your dashboard, journal, and battles.
         </p>
       </header>
 
@@ -93,7 +95,10 @@ export default function SignInPage() {
 
       <p className="text-center text-sm text-muted-foreground">
         New here?{" "}
-        <Link href="/signup" className="text-primary hover:underline">
+        <Link
+          href={`/signup${next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : ""}`}
+          className="text-primary hover:underline"
+        >
           Create an account
         </Link>
       </p>

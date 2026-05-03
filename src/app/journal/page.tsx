@@ -106,7 +106,7 @@ export default function JournalPage() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <Link
-            href="/"
+            href="/dashboard"
             className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-3 w-3" /> Dashboard
@@ -185,7 +185,7 @@ export default function JournalPage() {
             </h2>
           </div>
           <Button asChild>
-            <Link href="/">
+            <Link href="/dashboard">
               <Plus className="mr-2 h-4 w-4" />
               Start a session
             </Link>

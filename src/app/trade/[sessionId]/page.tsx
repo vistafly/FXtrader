@@ -171,7 +171,7 @@ export default function TradeSessionPage({
   const onExitSession = async () => {
     await useSessionStore.getState().endSession();
     toast.success("Session ended.");
-    router.push("/");
+    router.push("/dashboard");
   };
 
   const loading = bootedFor !== `${sessionId}/${resolution}` && !bootError;

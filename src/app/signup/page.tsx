@@ -18,17 +18,20 @@ import { ConvexError } from "convex/values";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { validateNextParam } from "@/lib/auth/nextParam";
 
 import { api } from "../../../convex/_generated/api";
 
 export default function SignUpPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = validateNextParam(searchParams.get("next"));
   const { isLoading: authLoading, isAuthenticated } = useConvexAuth();
   const profile = useQuery(
     api.profiles.getMyProfile,
@@ -42,11 +45,12 @@ export default function SignUpPage() {
   const [displayName, setDisplayName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Already fully signed up — bounce home.
-  if (isAuthenticated && profile) {
-    router.replace("/");
-    return null;
-  }
+  // Already fully signed up — bounce to the requested next or /dashboard.
+  useEffect(() => {
+    if (isAuthenticated && profile) router.replace(next);
+  }, [isAuthenticated, profile, next, router]);
+
+  if (isAuthenticated && profile) return null;
 
   // Authenticated but no profile yet → recovery form.
   const recoveryMode = isAuthenticated && profile === null;
@@ -66,7 +70,7 @@ export default function SignUpPage() {
         // Hard reload so ConvexReactClient re-instantiates from the
         // freshly-set auth cookies; client-side router.replace doesn't
         // always trigger useConvexAuth to re-evaluate.
-        window.location.href = "/";
+        window.location.href = next;
       } else {
         // Fresh signup. displayName flows through Password.profile() and
         // is written to the `profiles` table atomically by the
@@ -83,7 +87,7 @@ export default function SignUpPage() {
         // Hard reload so ConvexReactClient re-instantiates from the
         // freshly-set auth cookies; client-side router.replace doesn't
         // always trigger useConvexAuth to re-evaluate.
-        window.location.href = "/";
+        window.location.href = next;
       }
     } catch (err) {
       const msg =
@@ -112,7 +116,7 @@ export default function SignUpPage() {
         href="/"
         className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3 w-3" /> Dashboard
+        <ArrowLeft className="h-3 w-3" /> Home
       </Link>
       <header className="space-y-1">
         <h1 className="text-3xl font-semibold tracking-tight">
@@ -121,7 +125,7 @@ export default function SignUpPage() {
         <p className="text-sm text-muted-foreground">
           {recoveryMode
             ? "You're signed in but haven't picked a name yet."
-            : "Sign up to join multiplayer battles. Single-player still works without an account."}
+            : "Create an account to access your dashboard, journal, and battles."}
         </p>
       </header>
 
@@ -176,7 +180,10 @@ export default function SignUpPage() {
       {!recoveryMode && (
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{" "}
-          <Link href="/signin" className="text-primary hover:underline">
+          <Link
+            href={`/signin${next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : ""}`}
+            className="text-primary hover:underline"
+          >
             Sign in
           </Link>
         </p>

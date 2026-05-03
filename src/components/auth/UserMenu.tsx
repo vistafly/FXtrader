@@ -76,7 +76,13 @@ export function UserMenu() {
             setSigningOut(true);
             try {
               await signOut();
-            } finally {
+              // Hard reload to landing — same reason as the post-signin
+              // hard reload: ConvexReactClient state needs a clean slate
+              // for the next session, and the dashboard becomes inaccessible
+              // for anon users via the auth gate so we route to / instead
+              // of waiting for middleware to bounce.
+              window.location.href = "/";
+            } catch {
               setSigningOut(false);
             }
           }}

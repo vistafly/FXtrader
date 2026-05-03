@@ -64,7 +64,7 @@ export default function BattlesLobbyPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <Link
-            href="/"
+            href="/dashboard"
             className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-3 w-3" /> Dashboard

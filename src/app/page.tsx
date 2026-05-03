@@ -1,238 +1,34 @@
-"use client";
+// Public landing page (anonymous-accessible, gated by middleware to be
+// the only authed-app-adjacent page anyone without a session sees).
+//
+// Architecture per CLAUDE.md §16.1:
+//   - / → landing (this file)
+//   - /dashboard → authed app (formerly /, moved in v2.1.5)
+//   - /signin, /signup → auth pages
+//   - everything else → middleware-gated
+//
+// Authed users hitting / still see the landing — that's intentional, no
+// auto-redirect. Lets returning users browse marketing without forced
+// dashboard-takeover. Their UserMenu in the authed app has the entry
+// point; the landing has discovery CTAs for new visitors.
+import { Hero } from "@/components/landing/Hero";
+import { LandingNav } from "@/components/landing/LandingNav";
+import { ProductShowcase } from "@/components/landing/ProductShowcase";
 
-import {
-  Activity,
-  BarChart3,
-  BookOpen,
-  Clock,
-  Plus,
-  Swords,
-  Target,
-  TrendingUp,
-} from "lucide-react";
-import Link from "next/link";
-import { useEffect, useState } from "react";
-
-import { UserMenu } from "@/components/auth/UserMenu";
-import { BattlesSummary } from "@/components/dashboard/BattlesSummary";
-import { RecentSessionsTable } from "@/components/dashboard/RecentSessionsTable";
-import { StatsCard } from "@/components/dashboard/StatsCard";
-import { UserOverview } from "@/components/dashboard/UserOverview";
-import { ErrorBoundary } from "@/components/ErrorFallback";
-import { NewSessionDialog } from "@/components/trade/NewSessionDialog";
-import { Button } from "@/components/ui/button";
-import {
-  computeOverview,
-  computePerSessionPnl,
-  computeWinStreak,
-  formatDuration,
-  formatMoney,
-  formatPercent,
-  type OverviewStats,
-  type SessionPnl,
-} from "@/lib/analytics/stats";
-import {
-  classifyTraderKind,
-  type TraderKind,
-} from "@/lib/analytics/trader-kind";
-import { sessionRepository } from "@/lib/repository/SessionRepository";
-import { tradeRepository } from "@/lib/repository/TradeRepository";
-import type { Session } from "@/types/session";
-
-interface DashboardData {
-  sessions: Session[];
-  perSessionPnl: SessionPnl[];
-  overview: OverviewStats;
-  traderKind: TraderKind;
-  winStreak: number;
-}
-
-export default function Home() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [sessions, trades] = await Promise.all([
-        sessionRepository.list(),
-        tradeRepository.listAll(),
-      ]);
-      if (cancelled) return;
-      setData({
-        sessions,
-        perSessionPnl: computePerSessionPnl(sessions, trades),
-        overview: computeOverview(sessions, trades),
-        traderKind: classifyTraderKind(trades),
-        winStreak: computeWinStreak(trades),
-      });
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-10">
-      {/* Top bar */}
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Dashboard
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight">FXTrader</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button asChild size="lg" variant="ghost">
-            <Link href="/journal">
-              <BookOpen className="mr-2 h-4 w-4" />
-              Journal
-            </Link>
-          </Button>
-          <Button asChild size="lg" variant="ghost">
-            <Link href="/battles">
-              <Swords className="mr-2 h-4 w-4" />
-              Battles
-            </Link>
-          </Button>
-          <Button size="lg" onClick={() => setNewSessionOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Start new session
-          </Button>
-          <UserMenu />
-        </div>
-      </header>
-
-      {loading ? (
-        <DashboardSkeleton />
-      ) : !data || data.sessions.length === 0 ? (
-        <EmptyState onStart={() => setNewSessionOpen(true)} />
-      ) : (
-        <Loaded data={data} />
-      )}
-
-      <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} />
-    </main>
-  );
-}
-
-function Loaded({ data }: { data: DashboardData }) {
-  const { sessions, perSessionPnl, overview, traderKind, winStreak } = data;
-  const { winRate, expectancy, maxDrawdown, maxPnl, maxPnlPct, timePlayedSeconds, trades } =
-    overview;
-
+export default function LandingPage() {
   return (
     <>
-      <UserOverview
-        traderKind={traderKind}
-        battlesCount={0}
-        winStreak={winStreak}
-        totalSessions={sessions.length}
-      />
-
-      {/* Stats grid — 4 spec cards. Each card is independently boundaried
-          so a single broken stat doesn't kill the row. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <ErrorBoundary label="Win rate">
-          <StatsCard
-            icon={Target}
-            label="Win rate"
-            value={formatPercent(winRate)}
-            hint={
-              winRate === null
-                ? "No closed trades yet"
-                : `${overview.wins} W · ${overview.losses} L`
-            }
-          />
-        </ErrorBoundary>
-        <ErrorBoundary label="Max session P&L">
-          <StatsCard
-            icon={TrendingUp}
-            label="Max session P&L"
-            value={formatMoney(maxPnl, true)}
-            hint={maxPnlPct === null ? undefined : formatPercent(maxPnlPct, 2)}
-            accent={maxPnl !== null && maxPnl >= 0 ? "bull" : maxPnl !== null ? "bear" : "neutral"}
-          />
-        </ErrorBoundary>
-        <ErrorBoundary label="Time played">
-          <StatsCard
-            icon={Clock}
-            label="Time played"
-            value={formatDuration(timePlayedSeconds)}
-          />
-        </ErrorBoundary>
-        <ErrorBoundary label="Trades taken">
-          <StatsCard
-            icon={BarChart3}
-            label="Trades taken"
-            value={trades.toString()}
-            hint={
-              expectancy === null
-                ? undefined
-                : `Expectancy ${formatMoney(expectancy, true)} / trade`
-            }
-          />
-        </ErrorBoundary>
-      </div>
-
-      {/* Secondary row — drawdown + battles placeholder */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <StatsCard
-          icon={Activity}
-          label="Max drawdown"
-          value={formatMoney(maxDrawdown)}
-          hint={
-            maxDrawdown === null
-              ? "—"
-              : maxDrawdown > 0
-                ? "Peak-to-trough across all trades"
-                : "No drawdown yet"
-          }
-          accent={maxDrawdown && maxDrawdown > 0 ? "bear" : "neutral"}
-        />
-        <div className="lg:col-span-2">
-          <BattlesSummary />
+      <LandingNav />
+      <Hero />
+      <ProductShowcase />
+      <footer className="border-t border-border/60 px-6 py-8">
+        <div className="mx-auto flex max-w-6xl items-center justify-between text-xs text-muted-foreground">
+          <span className="font-mono uppercase tracking-wider">
+            FXTrader — practice replay simulator
+          </span>
+          <span className="font-mono">v2</span>
         </div>
-      </div>
-
-      <RecentSessionsTable sessions={sessions} perSessionPnl={perSessionPnl} />
+      </footer>
     </>
-  );
-}
-
-function EmptyState({ onStart }: { onStart: () => void }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/60 bg-card/30 px-6 py-16 text-center">
-      <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-        No history yet
-      </p>
-      <h2 className="text-2xl font-semibold tracking-tight">
-        Start your first session
-      </h2>
-      <p className="max-w-md text-sm text-muted-foreground">
-        Pick an instrument and a starting balance. Replay historical price
-        action bar-by-bar and place simulated trades against it.
-      </p>
-      <Button size="lg" onClick={onStart}>
-        <Plus className="mr-2 h-4 w-4" />
-        Start new session
-      </Button>
-    </div>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="grid gap-3">
-      <div className="h-24 animate-pulse rounded-xl bg-card/40" />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-24 animate-pulse rounded-xl bg-card/40" />
-        ))}
-      </div>
-      <div className="h-48 animate-pulse rounded-xl bg-card/40" />
-    </div>
   );
 }
