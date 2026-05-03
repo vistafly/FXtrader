@@ -22,6 +22,13 @@ class TradeRepository {
     return getDb().trades.where("sessionId").equals(sessionId).sortBy("exitTime");
   }
 
+  /** All closed trades across every session. Used by the dashboard's
+   *  cross-session analytics (win rate, max P&L, time played, etc.). */
+  async listAll(): Promise<Trade[]> {
+    if (!idbAvailable()) return [];
+    return getDb().trades.orderBy("exitTime").toArray();
+  }
+
   async deleteForSession(sessionId: string): Promise<void> {
     if (!idbAvailable()) return;
     await getDb().trades.where("sessionId").equals(sessionId).delete();
