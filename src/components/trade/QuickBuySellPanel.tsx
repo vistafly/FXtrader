@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
+import { uiPreCheckBattleRule } from "@/lib/battles/uiGuard";
 import { getInstrument } from "@/lib/instruments/instruments";
 import { cn } from "@/lib/utils";
 import { useOrderStore, type SubmittableOrder } from "@/stores/orderStore";
@@ -70,7 +71,17 @@ export function QuickBuySellPanel({ symbol, className }: Props) {
     if (orderType === "limit") order.limitPrice = price;
     if (orderType === "stop") order.stopPrice = price;
 
-    await submitOrder(order);
+    // UI-side battle pre-check (Phase 7 D1 hybrid). Backstop also runs
+    // inside orderStore.submitOrder.
+    if (!uiPreCheckBattleRule(order)) return;
+
+    try {
+      await submitOrder(order);
+    } catch (err) {
+      // Backstop fired (this only happens if pre-check missed something).
+      toast.error((err as Error).message);
+      return;
+    }
 
     if (orderType === "market") {
       toast.success(`${side === "buy" ? "Bought" : "Sold"} ${lotSize} ${symbol} at ${price.toFixed(inst.priceDecimals)}.`);

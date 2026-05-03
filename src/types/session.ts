@@ -19,4 +19,7 @@ export interface Session {
   lastPlayedAt: number;
   status: SessionStatus;
   speedSetting: SpeedSetting;
+  /** When set, this session is an attempt of the named battle. Battle rules
+   *  apply to all order submissions in this session (Phase 7). */
+  battleId?: string;
 }

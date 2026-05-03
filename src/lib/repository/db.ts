@@ -34,6 +34,12 @@ export class FXTraderDB extends Dexie {
       battleAttempts: "id, battleId, completedAt, pnlPct",
       bars: "id, instrument, time, [instrument+time]",
     });
+    // Phase 7: sessions can belong to a battle; battleAttempts gain a sessionId
+    // back-reference so we can hydrate an attempt's full trade history.
+    this.version(2).stores({
+      sessions: "id, instrument, status, lastPlayedAt, createdAt, battleId",
+      battleAttempts: "id, battleId, sessionId, completedAt, pnlPct, disqualified",
+    });
   }
 }
 

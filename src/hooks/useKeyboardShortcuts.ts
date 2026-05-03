@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { toast } from "sonner";
 
+import { uiPreCheckBattleRule } from "@/lib/battles/uiGuard";
 import { getInstrument } from "@/lib/instruments/instruments";
 import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
@@ -136,15 +137,24 @@ async function quickMarket(symbol: string, side: OrderSide) {
     useSettingsStore.getState();
   const slDelta = defaultStopLossPips * inst.pipSize;
   const tpDelta = defaultTakeProfitPips * inst.pipSize;
-  await useOrderStore.getState().submitOrder({
+  const order = {
     sessionId: session.id,
     instrument: symbol,
     side,
-    type: "market",
+    type: "market" as const,
     size: defaultLotSize,
     stopLoss: side === "buy" ? price - slDelta : price + slDelta,
     takeProfit: side === "buy" ? price + tpDelta : price - tpDelta,
-  });
+  };
+  // UI battle pre-check (Phase 7 D1 hybrid). orderStore.submitOrder runs
+  // the same check as a backstop.
+  if (!uiPreCheckBattleRule(order)) return;
+  try {
+    await useOrderStore.getState().submitOrder(order);
+  } catch (err) {
+    toast.error((err as Error).message);
+    return;
+  }
   toast.success(`Quick ${side} ${defaultLotSize} ${symbol}.`);
 }
 

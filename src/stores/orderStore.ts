@@ -65,6 +65,27 @@ export const useOrderStore = create<OrderState>((set) => ({
   closedTrades: [],
 
   submitOrder: async (input) => {
+    // Battle backstop (Phase 7 D1 hybrid). The UI guard runs first for
+    // inline feedback; this is the bypass-proof second pass. Throwing here
+    // prevents the order from being persisted; the UI surfaces the message
+    // as a toast.
+    {
+      const { useSessionStore } = await import("@/stores/sessionStore");
+      const session = useSessionStore.getState().activeSession;
+      const battle = useSessionStore.getState().activeBattle;
+      const balance = useSessionStore.getState().balance;
+      if (battle && session?.battleId === battle.id) {
+        const { getInstrument } = await import("@/lib/instruments/instruments");
+        const { checkBattleRule } = await import("@/lib/battles/guards");
+        const violation = checkBattleRule(input, {
+          battle,
+          instrument: getInstrument(input.instrument),
+          currentBalance: balance,
+        });
+        if (violation) throw new Error(violation);
+      }
+    }
+
     // Clamp TP/SL to the correct side of the price the order will fill at,
     // so an auto-fire on the next bar is impossible. The "pivot price" is
     // whatever price the order will fill at (current market for market

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 
 import { processBar } from "@/lib/engine/MatchingEngine";
 import { getInstrument } from "@/lib/instruments/instruments";
@@ -66,13 +66,26 @@ export function Providers({ children }: { children: React.ReactNode }) {
         );
 
         const openAfter = useOrderStore.getState().openPositions;
-        useSessionStore.getState().applyBarSettlement({
+        const settle = useSessionStore.getState().applyBarSettlement({
           closures: closuresApplied,
           openPositions: openAfter,
           instrument,
           currentPrice: event.bar.close,
           currentBarTime: event.bar.time,
         });
+
+        // Phase 7 D5: battle drawdown auto-fail. Hard end + DQ + pause +
+        // toast — a single coordinated response handled by the orchestrator
+        // since it owns the engine reference.
+        if (settle.drawdownViolation) {
+          engine.pause();
+          toast.error(`Attempt disqualified: ${settle.drawdownViolation}`);
+          // Fire-and-forget the persistence — UI is already updated.
+          void useSessionStore.getState().endSession({
+            disqualified: true,
+            reason: settle.drawdownViolation,
+          });
+        }
       });
     };
 

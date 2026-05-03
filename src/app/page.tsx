@@ -3,11 +3,14 @@
 import {
   Activity,
   BarChart3,
+  BookOpen,
   Clock,
   Plus,
+  Swords,
   Target,
   TrendingUp,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { BattlesSummary } from "@/components/dashboard/BattlesSummary";
@@ -79,10 +82,24 @@ export default function Home() {
           </p>
           <h1 className="text-3xl font-semibold tracking-tight">FXTrader</h1>
         </div>
-        <Button size="lg" onClick={() => setNewSessionOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Start new session
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="lg" variant="ghost">
+            <Link href="/journal">
+              <BookOpen className="mr-2 h-4 w-4" />
+              Journal
+            </Link>
+          </Button>
+          <Button asChild size="lg" variant="ghost">
+            <Link href="/battles">
+              <Swords className="mr-2 h-4 w-4" />
+              Battles
+            </Link>
+          </Button>
+          <Button size="lg" onClick={() => setNewSessionOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Start new session
+          </Button>
+        </div>
       </header>
 
       {loading ? (

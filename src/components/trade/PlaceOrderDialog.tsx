@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { uiPreCheckBattleRule } from "@/lib/battles/uiGuard";
 import { getInstrument } from "@/lib/instruments/instruments";
 import { cn } from "@/lib/utils";
 import { useOrderStore } from "@/stores/orderStore";
@@ -107,7 +108,7 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
       toast.error("Start a session first.");
       return;
     }
-    await submitOrder({
+    const order = {
       sessionId: session.id,
       instrument: symbol,
       side,
@@ -117,7 +118,14 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
       stopPrice: values.stopPrice != null ? Number(values.stopPrice) : undefined,
       stopLoss: values.stopLoss != null ? Number(values.stopLoss) : undefined,
       takeProfit: values.takeProfit != null ? Number(values.takeProfit) : undefined,
-    });
+    };
+    if (!uiPreCheckBattleRule(order)) return;
+    try {
+      await submitOrder(order);
+    } catch (err) {
+      toast.error((err as Error).message);
+      return;
+    }
     toast.success(
       `${side === "buy" ? "Buy" : "Sell"} ${values.size} ${symbol} ${values.type} order pending.`,
     );
