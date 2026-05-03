@@ -63,7 +63,10 @@ export default function SignUpPage() {
         // happened.
         await createProfile({ displayName });
         toast.success(`Welcome, @${displayName}`);
-        router.replace("/");
+        // Hard reload so ConvexReactClient re-instantiates from the
+        // freshly-set auth cookies; client-side router.replace doesn't
+        // always trigger useConvexAuth to re-evaluate.
+        window.location.href = "/";
       } else {
         // Fresh signup. displayName flows through Password.profile() and
         // is written to the `profiles` table atomically by the
@@ -77,7 +80,10 @@ export default function SignUpPage() {
           flow: "signUp",
         });
         toast.success(`Welcome, @${displayName}`);
-        router.replace("/");
+        // Hard reload so ConvexReactClient re-instantiates from the
+        // freshly-set auth cookies; client-side router.replace doesn't
+        // always trigger useConvexAuth to re-evaluate.
+        window.location.href = "/";
       }
     } catch (err) {
       const msg =

@@ -31,7 +31,11 @@ export default function SignInPage() {
     setSubmitting(true);
     try {
       await signIn("password", { email, password, flow: "signIn" });
-      router.replace("/");
+      // Hard reload (not router.replace) so ConvexReactClient re-instantiates
+      // from cookies. With client-side navigation the existing client persists
+      // and useConvexAuth doesn't always pick up the freshly-set JWT, leaving
+      // the UI in anon state until next manual reload.
+      window.location.href = "/";
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Sign-in failed";
