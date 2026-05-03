@@ -10,7 +10,13 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { normalizeEmail } from "@/lib/auth/emailNormalize";
 import { validateNextParam } from "@/lib/auth/nextParam";
+import {
+  translateAuthError,
+  validateEmail,
+  validatePassword,
+} from "@/lib/auth/validation";
 
 export default function SignInPage() {
   const router = useRouter();
@@ -32,17 +38,34 @@ export default function SignInPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+
+    // Pre-submit validation. The form has noValidate, so we own format checks.
+    const normalizedEmail = normalizeEmail(email);
+    const emailErr = validateEmail(normalizedEmail);
+    if (emailErr) {
+      toast.error(emailErr);
+      return;
+    }
+    const passwordErr = validatePassword(password);
+    if (passwordErr) {
+      toast.error(passwordErr);
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await signIn("password", { email, password, flow: "signIn" });
+      await signIn("password", {
+        email: normalizedEmail,
+        password,
+        flow: "signIn",
+      });
       // Hard reload (not router.replace) so ConvexReactClient re-instantiates
       // from cookies. With client-side navigation the existing client persists
       // and useConvexAuth doesn't always pick up the freshly-set JWT, leaving
       // the UI in anon state until next manual reload.
       window.location.href = next;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Sign-in failed";
-      toast.error(msg);
+      toast.error(translateAuthError(err, "signIn"));
     } finally {
       setSubmitting(false);
     }
@@ -63,7 +86,7 @@ export default function SignInPage() {
         </p>
       </header>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} noValidate className="space-y-4">
         <label className="block space-y-1">
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
             Email
@@ -72,8 +95,23 @@ export default function SignInPage() {
             type="email"
             required
             autoComplete="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            inputMode="email"
+            spellCheck={false}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            // Normalize on paste + blur (not keystroke) so clipboard
+            // whitespace and password-manager autofill artifacts get
+            // stripped BEFORE the browser's native <input type="email">
+            // validator sees them. Without this, " test@x.com " is
+            // rejected by the browser pre-submit and our server-side
+            // normalize never runs.
+            onPaste={(e) => {
+              e.preventDefault();
+              setEmail(normalizeEmail(e.clipboardData.getData("text")));
+            }}
+            onBlur={(e) => setEmail(normalizeEmail(e.target.value))}
           />
         </label>
         <label className="block space-y-1">

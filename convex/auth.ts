@@ -27,6 +27,15 @@ import { internal } from "./_generated/api";
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 
+// Mirror of src/lib/auth/emailNormalize.ts — duplicated here because
+// convex/ runs in its own runtime and can't import from src/.
+// Kept inline (one-liner) rather than a separate convex/_lib/ file
+// because the drift surface is small and the tests on the src/ copy
+// document the contract.
+function normalizeEmail(input: string): string {
+  return input.replace(/\s/g, "").toLowerCase();
+}
+
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: [
     Password({
@@ -35,7 +44,7 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       // (via the auth users table's `name` field) without polluting the
       // schema with a transient column.
       profile(params) {
-        const email = params.email as string;
+        const email = normalizeEmail(params.email as string);
         const displayName = params.displayName as string | undefined;
         if (params.flow === "signUp") {
           if (!displayName || !DISPLAY_NAME_RE.test(displayName)) {

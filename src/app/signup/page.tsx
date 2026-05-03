@@ -14,8 +14,7 @@
 // re-creating the auth account. The UserMenu's "Set display name" item also
 // routes here for the same recovery flow.
 import { useAuthActions } from "@convex-dev/auth/react";
-import { ConvexError } from "convex/values";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,7 +23,14 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { normalizeEmail } from "@/lib/auth/emailNormalize";
 import { validateNextParam } from "@/lib/auth/nextParam";
+import {
+  translateAuthError,
+  validateDisplayName,
+  validateEmail,
+  validatePassword,
+} from "@/lib/auth/validation";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -38,6 +44,7 @@ export default function SignUpPage() {
     isAuthenticated ? {} : "skip",
   );
   const { signIn } = useAuthActions();
+  const convex = useConvex();
   const createProfile = useMutation(api.profiles.createProfile);
 
   const [email, setEmail] = useState("");
@@ -58,8 +65,49 @@ export default function SignUpPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+
+    // Pre-submit validation. The form has noValidate, so we own format checks.
+    const displayNameErr = validateDisplayName(displayName);
+    if (displayNameErr) {
+      toast.error(displayNameErr);
+      return;
+    }
+    const normalizedEmail = recoveryMode ? "" : normalizeEmail(email);
+    if (!recoveryMode) {
+      const emailErr = validateEmail(normalizedEmail);
+      if (emailErr) {
+        toast.error(emailErr);
+        return;
+      }
+      const passwordErr = validatePassword(password);
+      if (passwordErr) {
+        toast.error(passwordErr);
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
+      if (!recoveryMode) {
+        // Pre-check: does this email already have an account?
+        // @convex-dev/auth's createAccountFromCredentials treats
+        // "same email + matching password" as a silent signin (returns
+        // existing user, no error). That's confusing UX — user clicks
+        // "Create account" and lands on dashboard, looking like a fresh
+        // signup. Reject explicitly here so they get a "Try signing in
+        // instead" message and a clear next step.
+        const taken = await convex.query(api.users.emailExists, {
+          email: normalizedEmail,
+        });
+        if (taken) {
+          toast.error(
+            "An account with that email already exists. Try signing in instead.",
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+
       if (recoveryMode) {
         // Authed user with no profile (e.g. left over from an earlier
         // failed signup before the server-side flow shipped). Use the
@@ -78,7 +126,7 @@ export default function SignUpPage() {
         // separate createProfile call needed (and would race with the
         // WebSocket auth refresh anyway).
         await signIn("password", {
-          email,
+          email: normalizedEmail,
           password,
           displayName,
           flow: "signUp",
@@ -90,13 +138,7 @@ export default function SignUpPage() {
         window.location.href = next;
       }
     } catch (err) {
-      const msg =
-        err instanceof ConvexError
-          ? String(err.data ?? "Sign-up failed")
-          : err instanceof Error
-            ? err.message
-            : "Sign-up failed";
-      toast.error(msg);
+      toast.error(translateAuthError(err, "signUp"));
     } finally {
       setSubmitting(false);
     }
@@ -129,7 +171,7 @@ export default function SignUpPage() {
         </p>
       </header>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} noValidate className="space-y-4">
         {!recoveryMode && (
           <>
             <Field label="Email">
@@ -137,8 +179,21 @@ export default function SignUpPage() {
                 type="email"
                 required
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                inputMode="email"
+                spellCheck={false}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                // See /signin for the rationale — normalize on paste
+                // and blur so the browser's native email validator
+                // doesn't reject whitespace before our server-side
+                // normalize gets a chance to run.
+                onPaste={(e) => {
+                  e.preventDefault();
+                  setEmail(normalizeEmail(e.clipboardData.getData("text")));
+                }}
+                onBlur={(e) => setEmail(normalizeEmail(e.target.value))}
               />
             </Field>
             <Field label="Password">
