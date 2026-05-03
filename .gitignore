@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# TradingView Trading Platform / Advanced Charts library files
+# License forbids redistribution. Drop these in manually after approval (see CLAUDE.md §18).
+/public/charting_library/
+/public/datafeeds/
+
+# Bundled sample data (large; regenerate via `pnpm fetch-data`)
+/public/data/*.json.gz

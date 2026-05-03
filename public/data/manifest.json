@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "syntheticSeed": "0x46585452",
+  "windowEnd": "2026-04-24T22:00:00Z",
+  "windowDays": 30,
+  "generatedAt": null,
+  "assets": [
+    {
+      "symbol": "EURUSD",
+      "fileSlug": "EURUSD",
+      "class": "forex",
+      "source": "synthetic",
+      "timeframes": [
+        "1m"
+      ],
+      "startTime": 1774476000,
+      "endTime": 1777067940,
+      "barCount": 31680,
+      "fileSize": 415142
+    },
+    {
+      "symbol": "GBPUSD",
+      "fileSlug": "GBPUSD",
+      "class": "forex",
+      "source": "synthetic",
+      "timeframes": [
+        "1m"
+      ],
+      "startTime": 1774476000,
+      "endTime": 1777067940,
+      "barCount": 31680,
+      "fileSize": 430775
+    },
+    {
+      "symbol": "USDJPY",
+      "fileSlug": "USDJPY",
+      "class": "forex",
+      "source": "synthetic",
+      "timeframes": [
+        "1m"
+      ],
+      "startTime": 1774476000,
+      "endTime": 1777067940,
+      "barCount": 31680,
+      "fileSize": 445137
+    },
+    {
+      "symbol": "NQ1!",
+      "fileSlug": "NQ1",
+      "class": "futures",
+      "source": "synthetic",
+      "timeframes": [
+        "1m"
+      ],
+      "startTime": 1774476000,
+      "endTime": 1777064340,
+      "barCount": 30360,
+      "fileSize": 564998
+    },
+    {
+      "symbol": "ES1!",
+      "fileSlug": "ES1",
+      "class": "futures",
+      "source": "synthetic",
+      "timeframes": [
+        "1m"
+      ],
+      "startTime": 1774476000,
+      "endTime": 1777064340,
+      "barCount": 30360,
+      "fileSize": 503532
+    }
+  ]
+}
