@@ -1,5 +1,7 @@
 "use client";
 
+import { ConvexAuthNextjsProvider } from "@convex-dev/auth/nextjs";
+import { ConvexReactClient } from "convex/react";
 import { useEffect } from "react";
 import { Toaster, toast } from "sonner";
 
@@ -8,6 +10,11 @@ import { getInstrument } from "@/lib/instruments/instruments";
 import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
 import { useSessionStore } from "@/stores/sessionStore";
+
+// Module-scope singleton so HMR doesn't churn through clients.
+const convex = new ConvexReactClient(
+  process.env.NEXT_PUBLIC_CONVEX_URL ?? "",
+);
 
 /**
  * Root client provider. Owns the engine ↔ store wiring per CLAUDE.md §9 + Phase 5 D1.
@@ -104,9 +111,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <>
+    <ConvexAuthNextjsProvider client={convex}>
       {children}
       <Toaster theme="dark" position="top-right" />
-    </>
+    </ConvexAuthNextjsProvider>
   );
 }

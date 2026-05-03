@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { UserMenu } from "@/components/auth/UserMenu";
 import { Leaderboard } from "@/components/battles/Leaderboard";
 import { ErrorBoundary } from "@/components/ErrorFallback";
 import { Button } from "@/components/ui/button";
@@ -103,10 +104,13 @@ export default function BattleDetailPage({
             {battle.instrument} · {battle.durationBars} bars · ${battle.startingBalance.toLocaleString()}
           </p>
         </div>
-        <Button size="lg" onClick={onNewAttempt} disabled={starting}>
-          <Plus className="mr-2 h-4 w-4" />
-          {starting ? "Starting…" : "New attempt"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="lg" onClick={onNewAttempt} disabled={starting}>
+            <Plus className="mr-2 h-4 w-4" />
+            {starting ? "Starting…" : "New attempt"}
+          </Button>
+          <UserMenu />
+        </div>
       </header>
 
       {/* Rules summary */}

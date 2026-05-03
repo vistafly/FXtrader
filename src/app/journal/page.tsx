@@ -4,6 +4,7 @@ import { ArrowLeft, BookOpen, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UserMenu } from "@/components/auth/UserMenu";
 import { ErrorBoundary } from "@/components/ErrorFallback";
 import { EquityCurveChart } from "@/components/journal/EquityCurveChart";
 import { PnlHistogram } from "@/components/journal/PnlHistogram";
@@ -102,17 +103,20 @@ export default function JournalPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-10">
-      <header className="space-y-1">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-3 w-3" /> Dashboard
-        </Link>
-        <h1 className="text-3xl font-semibold tracking-tight">Journal</h1>
-        <p className="text-sm text-muted-foreground">
-          Equity curve, distributions, and a searchable record of every trade.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-3 w-3" /> Dashboard
+          </Link>
+          <h1 className="text-3xl font-semibold tracking-tight">Journal</h1>
+          <p className="text-sm text-muted-foreground">
+            Equity curve, distributions, and a searchable record of every trade.
+          </p>
+        </div>
+        <UserMenu />
       </header>
 
       {/* Filters */}

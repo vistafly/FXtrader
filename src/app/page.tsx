@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { UserMenu } from "@/components/auth/UserMenu";
 import { BattlesSummary } from "@/components/dashboard/BattlesSummary";
 import { RecentSessionsTable } from "@/components/dashboard/RecentSessionsTable";
 import { StatsCard } from "@/components/dashboard/StatsCard";
@@ -100,6 +101,7 @@ export default function Home() {
             <Plus className="mr-2 h-4 w-4" />
             Start new session
           </Button>
+          <UserMenu />
         </div>
       </header>
 

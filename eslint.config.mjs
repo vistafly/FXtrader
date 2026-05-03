@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Convex CLI auto-generated files. The generator emits eslint-disable
+    // directives our config flags as unused; not actionable on our side.
+    "convex/_generated/**",
   ]),
 ]);
 

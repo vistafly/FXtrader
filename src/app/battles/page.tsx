@@ -4,6 +4,7 @@ import { ArrowLeft, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { UserMenu } from "@/components/auth/UserMenu";
 import { BattleCard } from "@/components/battles/BattleCard";
 import { CreateBattleDialog } from "@/components/battles/CreateBattleDialog";
 import { Button } from "@/components/ui/button";
@@ -73,10 +74,13 @@ export default function BattlesLobbyPage() {
             Replay a fixed window of history under rules. Compete with yourself.
           </p>
         </div>
-        <Button size="lg" onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create battle
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="lg" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create battle
+          </Button>
+          <UserMenu />
+        </div>
       </header>
 
       <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterTab)}>

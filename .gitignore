@@ -33,6 +33,10 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Convex CLI temp dir — kept on the same drive as the project so the file
+# watcher works on Windows. Not committed; auto-created on `npx convex dev`.
+.convex-tmp/
+
 # vercel
 .vercel
 
