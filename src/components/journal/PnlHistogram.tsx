@@ -20,7 +20,7 @@ export function PnlHistogram({ trades }: { trades: Trade[] }) {
   if (buckets.length === 0) {
     return (
       <div className="flex h-[240px] items-center justify-center rounded-xl border border-border/60 bg-card/30 text-sm text-muted-foreground">
-        No trades yet
+        No trades match your filters
       </div>
     );
   }

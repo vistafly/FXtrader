@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { ChartContainer } from "@/components/chart/ChartContainer";
+import { ErrorBoundary } from "@/components/ErrorFallback";
 import { ReplayControls } from "@/components/replay/ReplayControls";
 import { ScrubberBar } from "@/components/replay/ScrubberBar";
 import { AccountHUD } from "@/components/trade/AccountHUD";
@@ -199,8 +200,11 @@ export default function TradeSessionPage({
             onPointerDown={pingTimeframe}
           >
             {loading && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center text-sm text-muted-foreground">
-                loading {symbol || "session"}…
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60">
+                <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 font-mono text-xs text-muted-foreground shadow">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                  Loading {symbol || "session"}…
+                </div>
               </div>
             )}
             {bootError && (
@@ -208,7 +212,15 @@ export default function TradeSessionPage({
                 {bootError}
               </div>
             )}
-            {symbol && <ChartContainer symbol={symbol} />}
+            {symbol && (
+              <ErrorBoundary
+                label="Chart"
+                hint="The chart failed to render. Try selecting a different timeframe or instrument."
+                className="absolute inset-4"
+              >
+                <ChartContainer symbol={symbol} />
+              </ErrorBoundary>
+            )}
 
             {/* Glassy account HUD — top-right of the chart. Hides when the
                 full account sidebar is open (the sidebar shows the same

@@ -1,15 +1,17 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { ErrorBoundary } from "@/components/ErrorFallback";
 import { EquityCurveChart } from "@/components/journal/EquityCurveChart";
 import { PnlHistogram } from "@/components/journal/PnlHistogram";
 import { TagInput } from "@/components/journal/TagInput";
 import { TradeDetailDrawer } from "@/components/journal/TradeDetailDrawer";
 import { WinLossPie } from "@/components/journal/WinLossPie";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -168,18 +170,38 @@ export default function JournalPage() {
           ))}
         </div>
       ) : trades.length === 0 ? (
-        <div className="flex h-[240px] items-center justify-center rounded-xl border border-dashed border-border/60 bg-card/30 text-sm text-muted-foreground">
-          No closed trades yet — start a session to begin building your journal.
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/60 bg-card/30 px-6 py-16 text-center">
+          <BookOpen className="h-8 w-8 text-muted-foreground" />
+          <div className="space-y-1">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              No history yet
+            </p>
+            <h2 className="text-xl font-semibold tracking-tight">
+              Your journal will fill in once you close some trades.
+            </h2>
+          </div>
+          <Button asChild>
+            <Link href="/">
+              <Plus className="mr-2 h-4 w-4" />
+              Start a session
+            </Link>
+          </Button>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <EquityCurveChart trades={filtered} />
+              <ErrorBoundary label="Equity curve">
+                <EquityCurveChart trades={filtered} />
+              </ErrorBoundary>
             </div>
-            <WinLossPie trades={filtered} />
+            <ErrorBoundary label="Win/loss chart">
+              <WinLossPie trades={filtered} />
+            </ErrorBoundary>
           </div>
-          <PnlHistogram trades={filtered} />
+          <ErrorBoundary label="P&L distribution">
+            <PnlHistogram trades={filtered} />
+          </ErrorBoundary>
 
           {/* Trade list */}
           <div className="rounded-xl border border-border/80 bg-card/40 overflow-hidden">

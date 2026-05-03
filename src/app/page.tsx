@@ -17,6 +17,7 @@ import { BattlesSummary } from "@/components/dashboard/BattlesSummary";
 import { RecentSessionsTable } from "@/components/dashboard/RecentSessionsTable";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { UserOverview } from "@/components/dashboard/UserOverview";
+import { ErrorBoundary } from "@/components/ErrorFallback";
 import { NewSessionDialog } from "@/components/trade/NewSessionDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -129,40 +130,49 @@ function Loaded({ data }: { data: DashboardData }) {
         totalSessions={sessions.length}
       />
 
-      {/* Stats grid — 4 spec cards */}
+      {/* Stats grid — 4 spec cards. Each card is independently boundaried
+          so a single broken stat doesn't kill the row. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatsCard
-          icon={Target}
-          label="Win rate"
-          value={formatPercent(winRate)}
-          hint={
-            winRate === null
-              ? "No closed trades yet"
-              : `${overview.wins} W · ${overview.losses} L`
-          }
-        />
-        <StatsCard
-          icon={TrendingUp}
-          label="Max session P&L"
-          value={formatMoney(maxPnl, true)}
-          hint={maxPnlPct === null ? undefined : formatPercent(maxPnlPct, 2)}
-          accent={maxPnl !== null && maxPnl >= 0 ? "bull" : maxPnl !== null ? "bear" : "neutral"}
-        />
-        <StatsCard
-          icon={Clock}
-          label="Time played"
-          value={formatDuration(timePlayedSeconds)}
-        />
-        <StatsCard
-          icon={BarChart3}
-          label="Trades taken"
-          value={trades.toString()}
-          hint={
-            expectancy === null
-              ? undefined
-              : `Expectancy ${formatMoney(expectancy, true)} / trade`
-          }
-        />
+        <ErrorBoundary label="Win rate">
+          <StatsCard
+            icon={Target}
+            label="Win rate"
+            value={formatPercent(winRate)}
+            hint={
+              winRate === null
+                ? "No closed trades yet"
+                : `${overview.wins} W · ${overview.losses} L`
+            }
+          />
+        </ErrorBoundary>
+        <ErrorBoundary label="Max session P&L">
+          <StatsCard
+            icon={TrendingUp}
+            label="Max session P&L"
+            value={formatMoney(maxPnl, true)}
+            hint={maxPnlPct === null ? undefined : formatPercent(maxPnlPct, 2)}
+            accent={maxPnl !== null && maxPnl >= 0 ? "bull" : maxPnl !== null ? "bear" : "neutral"}
+          />
+        </ErrorBoundary>
+        <ErrorBoundary label="Time played">
+          <StatsCard
+            icon={Clock}
+            label="Time played"
+            value={formatDuration(timePlayedSeconds)}
+          />
+        </ErrorBoundary>
+        <ErrorBoundary label="Trades taken">
+          <StatsCard
+            icon={BarChart3}
+            label="Trades taken"
+            value={trades.toString()}
+            hint={
+              expectancy === null
+                ? undefined
+                : `Expectancy ${formatMoney(expectancy, true)} / trade`
+            }
+          />
+        </ErrorBoundary>
       </div>
 
       {/* Secondary row — drawdown + battles placeholder */}

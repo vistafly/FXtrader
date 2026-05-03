@@ -7,6 +7,7 @@ import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Leaderboard } from "@/components/battles/Leaderboard";
+import { ErrorBoundary } from "@/components/ErrorFallback";
 import { Button } from "@/components/ui/button";
 import { formatPercent } from "@/lib/analytics/stats";
 import { battleRepository } from "@/lib/repository/BattleRepository";
@@ -141,7 +142,9 @@ export default function BattleDetailPage({
         </ul>
       </div>
 
-      <Leaderboard attempts={attempts} />
+      <ErrorBoundary label="Leaderboard">
+        <Leaderboard attempts={attempts} />
+      </ErrorBoundary>
     </main>
   );
 }

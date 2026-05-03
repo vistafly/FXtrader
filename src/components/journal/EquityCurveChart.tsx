@@ -20,7 +20,7 @@ export function EquityCurveChart({ trades }: { trades: Trade[] }) {
   if (points.length === 0) {
     return (
       <div className="flex h-[240px] items-center justify-center rounded-xl border border-border/60 bg-card/30 text-sm text-muted-foreground">
-        No closed trades — equity curve will appear once you have trade history.
+        No trades match your filters
       </div>
     );
   }
