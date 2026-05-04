@@ -1,5 +1,6 @@
 "use client";
 
+import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -31,6 +32,9 @@ import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { OrderSide } from "@/types/order";
+
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
 
 const TIMEFRAMES: { label: string; value: ResolutionString }[] = [
   { label: "1m", value: "1" },
@@ -168,8 +172,26 @@ export default function TradeSessionPage({
     symbol,
   });
 
+  const submitServerAttempt = useMutation(api.battles.submitAttempt);
+
   const onExitSession = async () => {
-    await useSessionStore.getState().endSession();
+    // Inject the Convex submission for server-battle sessions. The
+    // sessionStore stays decoupled — it computes the attempt data and
+    // hands it off via this callback. Local-battle sessions ignore it.
+    await useSessionStore.getState().endSession({
+      submitToServer: async (data) => {
+        await submitServerAttempt({
+          battleId: data.battleId as Id<"battles">,
+          finalBalance: data.finalBalance,
+          pnlPct: data.pnlPct,
+          trades: data.trades,
+          winRate: data.winRate,
+          disqualified: data.disqualified,
+          disqualificationReason: data.disqualificationReason,
+          completedAt: data.completedAt,
+        });
+      },
+    });
     toast.success("Session ended.");
     router.push("/dashboard");
   };

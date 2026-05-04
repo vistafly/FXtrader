@@ -12,7 +12,15 @@
 // The middleware sets `next=<original-path>` when redirecting unauthed users
 // to /signin; this validator runs on the way back out so we only ever land
 // on a path we control.
-const ALLOWED_PREFIXES = ["/dashboard", "/battles", "/journal", "/trade", "/settings"];
+const ALLOWED_PREFIXES = [
+  "/dashboard",
+  "/battles",
+  "/journal",
+  "/trade",
+  "/settings",
+];
+// `/battles/join/<code>` matches the `/battles` prefix above, so invite
+// links survive the redirect through /signin?next=... naturally.
 
 const FALLBACK = "/dashboard";
 

@@ -22,4 +22,9 @@ export interface Session {
   /** When set, this session is an attempt of the named battle. Battle rules
    *  apply to all order submissions in this session (Phase 7). */
   battleId?: string;
+  /** v2.2: where the battle data lives. "local" → IndexedDB (v1 model);
+   *  "server" → Convex (multiplayer). When undefined, treat as "local"
+   *  for backwards compat. Used by sessionStore.endSession to dispatch
+   *  attempt persistence. */
+  battleSource?: "local" | "server";
 }

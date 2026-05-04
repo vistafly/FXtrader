@@ -11,6 +11,9 @@ import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
 import { useSessionStore } from "@/stores/sessionStore";
 
+import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+
 // Module-scope singleton so HMR doesn't churn through clients.
 const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL ?? "",
@@ -83,14 +86,30 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
         // Phase 7 D5: battle drawdown auto-fail. Hard end + DQ + pause +
         // toast — a single coordinated response handled by the orchestrator
-        // since it owns the engine reference.
+        // since it owns the engine reference. v2.2 addition: for server
+        // battles, we inject an imperative Convex mutation call. We can't
+        // use useMutation here (this useEffect runs OUTSIDE the React
+        // hooks tree relative to ConvexAuthNextjsProvider), so we go
+        // through the module-scope `convex` client directly. The client
+        // shares its auth state with the provider via ConvexAuthNextjsProvider.
         if (settle.drawdownViolation) {
           engine.pause();
           toast.error(`Attempt disqualified: ${settle.drawdownViolation}`);
-          // Fire-and-forget the persistence — UI is already updated.
           void useSessionStore.getState().endSession({
             disqualified: true,
             reason: settle.drawdownViolation,
+            submitToServer: async (data) => {
+              await convex.mutation(api.battles.submitAttempt, {
+                battleId: data.battleId as Id<"battles">,
+                finalBalance: data.finalBalance,
+                pnlPct: data.pnlPct,
+                trades: data.trades,
+                winRate: data.winRate,
+                disqualified: data.disqualified,
+                disqualificationReason: data.disqualificationReason,
+                completedAt: data.completedAt,
+              });
+            },
           });
         }
       });

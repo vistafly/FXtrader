@@ -39,14 +39,29 @@ export default defineSchema({
 
   battles: defineTable({
     name: v.string(),
-    instrument: v.string(),
+    // v2.2: list of 1-5 instruments the battle is configured for.
+    // FORM-ONLY multi-asset in v2.2 — schema accepts the array, but the
+    // trade view uses instruments[0] at attempt start. Full multi-asset
+    // (per-instrument switching during play) is v2.2.5. The schema shape
+    // is the v2.2.5-ready version so v2.2.5's work is purely client/UI;
+    // no schema migration needed at that point.
+    instruments: v.array(v.string()),
     startBarTime: v.number(),
-    durationBars: v.number(),
+    // v2.2: stored in minutes. Translated to bars at session start
+    // (1 bar/sec at 1× speed → 60 bars per minute).
+    durationMinutes: v.number(),
     startingBalance: v.number(),
+    // v2.2: cap on distinct userIds that can submit attempts. Enforced
+    // at submitAttempt by counting distinct prior attempt userIds.
+    maxParticipants: v.number(),
     rules: v.object({
       maxDrawdownPct: v.optional(v.number()),
       maxLossPerTradePct: v.optional(v.number()),
       requireStopLoss: v.optional(v.boolean()),
+      // v2.2: optional profit-target. Display only — no auto-end of
+      // attempts on hit. Leaderboard surfaces a "target hit" badge for
+      // attempts whose final pnlPct >= profitTargetPct.
+      profitTargetPct: v.optional(v.number()),
     }),
     visibility: v.union(v.literal("invite-only"), v.literal("public")),
     inviteCode: v.optional(v.string()),
@@ -74,5 +89,9 @@ export default defineSchema({
   })
     .index("by_battleId", ["battleId"])
     .index("by_battle_user", ["battleId", "userId"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    // v2.2: composite index for snapshot-leaderboard queries that
+    // sort attempts within a battle by completion time. Aggregation
+    // to "best-per-user" happens client-side in lib/battles/leaderboard.ts.
+    .index("by_battle_completed", ["battleId", "completedAt"]),
 });
