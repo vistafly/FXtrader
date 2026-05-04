@@ -1142,13 +1142,39 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   scope). 2-3 days of work; security-boundary phase, full new gate
   format applies.
 - **v2.3** ⏳ after v2.2.5 — Battle context UI + resumable attempts.
-  Includes one-attempt-per-user-per-battle for multiplayer battles
-  with server-side resumable in-flight state (Exit session returns to
-  dashboard without finalizing; only liquidation, profit-target hit,
-  or explicit "Submit & Exit" finalizes). Sync strategy and
-  leaderboard-refresh cadence decisions to be made in the v2.3 plan.
+  Meaty phase, possibly larger than v2.2.5. Includes:
+    - Countdown timer in the trade view ("Time Remaining 00:54:51")
+    - "Ready? / Battle starts now!" intro transition
+      (see `references/fxreplay-battle-ready.png` for visual)
+    - Live leaderboard panel (realtime updates as attempts complete)
+    - Participants list (5/10) with online/offline status
+    - "Go to" navigation between battle elements
+    - One attempt per (user, multiplayer battle)
+    - Server-side resumable in-flight state — the "Exit session" button
+      must NOT finalize the attempt; only liquidation, profit-target
+      hit, or an explicit "Submit & Exit" action finalize. Plain Exit
+      returns to dashboard with attempt resumable from the same
+      bar/balance/positions/orders state.
+    - Watch-on-after-liquidation mode (read-only chart/positions view)
+    - Rules display inside the trade panel during multiplayer play
+  Reference visual: `references/fxreplay-battle-active.png`.
+  Sync strategy, leaderboard-refresh cadence, and liquidation criteria
+  decisions to be made in the v2.3 plan (multiple D-decisions expected).
+- **v2.4** ⏳ after v2.3 — Spectator mode. While a multiplayer battle
+  is active, any participant or invited spectator can open a "watch"
+  view of another player's chart, positions, and equity in
+  near-real-time. Read-only; no interaction. Architecturally similar
+  size to v2.2.5 (5-8 D-decisions: sync strategy, privacy/opt-in,
+  replay-log vs live-state, spectator UI layout, etc.). NOT polish —
+  this is a real architectural phase. Decision driven by "watching
+  each other trade is the point of multiplayer" framing.
+- **v2.5** ⏳ after v2.4 — TBD polish based on real friend-group usage
+  of v2.2 → v2.4. Likely includes revisions to v2.2.5/v2.3/v2.4 choices
+  once real usage surfaces friction. Cannot be pre-planned; informed
+  by actual use.
 
-Phases v2.1–v2.2 are complete. v2.2.5 is next, then v2.3.
+Phases v2.1–v2.2 are complete. v2.2.5 is next, then v2.3 / v2.4 / v2.5
+in that order.
 
 ### Decisions baked into v2.0 (and the why)
 
@@ -1175,7 +1201,10 @@ Phases v2.1–v2.2 are complete. v2.2.5 is next, then v2.3.
   product opens up.
 - **Many attempts per (user, battle); leaderboard shows best, exposes
   attempt count** — same model as v1's local battles. "Alice · best +5.8%
-  · 3 attempts" distinguishes one-shot wins from grinding.
+  · 3 attempts" distinguishes one-shot wins from grinding. *Note: v2.3
+  changes this to one-attempt-per-user-per-battle with resumable
+  in-flight state for MULTIPLAYER battles only. Local single-player
+  battles retain the many-attempts model.*
 - **Globally unique, case-insensitive display names** — stored as-typed
   for display, `displayNameLower` for the uniqueness check. Renamable
   once per 7 days. Display name is snapshotted on `battleAttempts` and
@@ -1293,7 +1322,9 @@ Required reading before specific phases:
 | Phase 4 (chart) | https://github.com/tradingview/lightweight-charts | API docs and examples |
 | Phase 4 (chart) | https://github.com/tradingview/charting-library-examples/tree/main/nextjs | Next.js integration patterns (transferable to Lightweight Charts) |
 | Future swap | https://github.com/tradingview/awesome-tradingview | Community datafeeds and integrations |
-| FXReplay reference | Scraped HTML in `D:\GitUploads\FXTrader\Dash` and `D:\GitUploads\FXTrader\Trader` | UI inspiration |
+| FXReplay reference | Scraped HTML in `../Dash` and `../Trader` | UI inspiration |
+| FXReplay battle UI reference | `references/fxreplay-battle-active.png` | Visual baseline for battle context UI (v2.3 scope) |
+| FXReplay battle intro | `references/fxreplay-battle-ready.png` | "Ready?" intro transition reference (v2.3 scope) |
 
 ---
 
