@@ -1,5 +1,11 @@
 import type { Instrument } from "@/types/instrument";
 
+// Session hours coverage:
+//   forex (EURUSD, GBPUSD, USDJPY) → "forex" preset
+//   CME futures (NQ1!, ES1!)        → "cme-futures" preset
+// Any future instrument should set sessionHours when added; the closed-
+// market overlay does NOT render for instruments without a preset.
+
 export const EURUSD: Instrument = {
   symbol: "EURUSD",
   displayName: "EUR/USD",
@@ -11,6 +17,7 @@ export const EURUSD: Instrument = {
   marginPerContract: 1_000, // 100:1 simulated leverage
   commission: 3.5, // USD per side per standard lot
   priceDecimals: 5,
+  sessionHours: "forex",
 };
 
 export const GBPUSD: Instrument = {
@@ -24,6 +31,7 @@ export const GBPUSD: Instrument = {
   marginPerContract: 1_000,
   commission: 3.5,
   priceDecimals: 5,
+  sessionHours: "forex",
 };
 
 export const USDJPY: Instrument = {
@@ -37,6 +45,7 @@ export const USDJPY: Instrument = {
   marginPerContract: 1_000,
   commission: 3.5,
   priceDecimals: 3,
+  sessionHours: "forex",
 };
 
 export const NQ1: Instrument = {
@@ -50,6 +59,7 @@ export const NQ1: Instrument = {
   marginPerContract: 18_000,
   commission: 2.5,
   priceDecimals: 2,
+  sessionHours: "cme-futures",
 };
 
 export const ES1: Instrument = {
@@ -63,6 +73,7 @@ export const ES1: Instrument = {
   marginPerContract: 13_000,
   commission: 2.5,
   priceDecimals: 2,
+  sessionHours: "cme-futures",
 };
 
 export const INSTRUMENTS: Record<string, Instrument> = {

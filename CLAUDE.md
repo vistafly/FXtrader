@@ -1180,13 +1180,25 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   focused pane is still visually distinct. Multi-pane same-instrument
   duplicates show the same count in each (correct semantic — same
   underlying positions, two views).
-- **v2.2.6b** ⏳ next — Closed-market overlay per pane (D4). When an
-  instrument's session is closed (forex weekend, equity overnight gap),
-  render a translucent "Market Closed" overlay over that pane's chart
-  area. Master-clock-based fade: overlay clears when
-  `masterClock.currentBarTime` crosses the next-open timestamp.
-  Defensive fallback: instruments without session-hours metadata don't
-  show the overlay (under-show beats incorrectly showing).
+- **v2.2.6b** ✅ shipped May 2026 — Per-pane market-hours indicator
+  dot (D4 reframed). Originally scoped as a translucent chart-area
+  curtain overlay; user feedback during implementation pivoted to a
+  small green/red status dot inside the `PaneInstrumentSelector`
+  chip (replacing the prior blue active-pane dot, which was
+  redundant with the chip's border-color signal). Master-clock-driven:
+  the dot flips the moment `replayStore.currentBarTime` crosses the
+  next-open / next-close boundary, regardless of whether a bar has
+  arrived from the dataset. Visual: 8px core dot with a softer
+  same-hue halo ring + outer glow + 300ms color transition. Native
+  `title` tooltip shows "Market open" or "Market closed — opens
+  Sun 22:00 UTC". Hidden entirely for instruments without a
+  `sessionHours` preset (defensive: better to show nothing than a
+  wrong signal). 16 unit tests cover boundary detection (forex
+  Sun 22:00 UTC open, Fri 22:00 UTC close; CME Sun 23:00 UTC open;
+  unknown-instrument fallback). DST not modeled — overlay drifts
+  ±1hr around DST changeovers vs. real exchange clock; acceptable
+  trade-off for a replay simulator. CME 22:00–23:00 UTC weekday
+  maintenance break also not modeled to avoid daily flicker.
 - **v2.2.6c** ⏳ after 2.2.6b — Per-pane scroll-position persistence.
   Extend `layoutState` with per-pane `visibleRangeStart`/`visibleRangeEnd`;
   capture from ChartContainer's existing visible-range subscription;
@@ -1225,8 +1237,8 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   once real usage surfaces friction. Cannot be pre-planned; informed
   by actual use.
 
-Phases v2.1–v2.2.6a are complete. v2.2.6b is shipping next, then v2.2.6c,
-then v2.3 / v2.4 / v2.5.
+Phases v2.1–v2.2.6b are complete. v2.2.6c is shipping next, then
+v2.3 / v2.4 / v2.5.
 
 ### Decisions baked into v2.0 (and the why)
 
