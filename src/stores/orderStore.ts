@@ -5,6 +5,7 @@ import {
   computePnl,
   type ProcessBarResult,
 } from "@/lib/engine/MatchingEngine";
+import { attemptEventQueue } from "@/lib/events/AttemptEventQueue";
 import { useReplayStore } from "@/stores/replayStore";
 import type { Bar } from "@/types/bar";
 import type { Instrument } from "@/types/instrument";
@@ -165,8 +166,10 @@ export const useOrderStore = create<OrderState>((set) => ({
         );
       }
       const fillPrice = currentBar.close;
+      const orderId = nextId("ord");
+      const positionId = nextId("pos");
       const position: Position = {
-        id: nextId("pos"),
+        id: positionId,
         sessionId: input.sessionId,
         instrument: input.instrument,
         side: input.side,
@@ -183,9 +186,39 @@ export const useOrderStore = create<OrderState>((set) => ({
       set((state) => ({
         openPositions: [...state.openPositions, position],
       }));
+      // v2.3 sub-phase 2: market orders emit BOTH submit-order and
+      // order-fill so the event log is uniform across market and
+      // limit/stop paths. The reducer handles them in sequence: the
+      // submit creates a pending entry, the fill consumes it and
+      // produces an open position with the same fillPrice.
+      //
+      // Commission convention (matches MatchingEngine.computeCommission):
+      // round-turn is charged at CLOSE only, not at entry. So order-fill
+      // emits commission: 0; the position-stop event later carries the
+      // full `computeCommission(inst, size)`. Reducer math matches
+      // orderStore math by construction.
+      attemptEventQueue.enqueue({
+        type: "submit-order",
+        time: currentBar.time,
+        orderId,
+        instrument: input.instrument,
+        side: input.side,
+        orderType: "market",
+        size: input.size,
+        stopLoss: input.stopLoss,
+        takeProfit: input.takeProfit,
+      });
+      attemptEventQueue.enqueue({
+        type: "order-fill",
+        time: currentBar.time,
+        orderId,
+        positionId,
+        fillPrice,
+        commission: 0,
+      });
       return {
         ...input,
-        id: nextId("ord"),
+        id: orderId,
         status: "filled",
         createdAt: currentBar.time,
         filledAt: currentBar.time,
@@ -199,23 +232,53 @@ export const useOrderStore = create<OrderState>((set) => ({
     // interprets correctly during scrub-back / replay-through-seen-bars.
     const simNow =
       orderEngine?.getCurrentBar()?.time ?? Math.floor(Date.now() / 1000);
+    const orderId = nextId("ord");
     const order: Order = {
       ...input,
-      id: nextId("ord"),
+      id: orderId,
       status: "pending",
       createdAt: simNow,
     };
     set((state) => ({ pendingOrders: [...state.pendingOrders, order] }));
+    attemptEventQueue.enqueue({
+      type: "submit-order",
+      time: simNow,
+      orderId,
+      instrument: input.instrument,
+      side: input.side,
+      orderType: input.type,
+      size: input.size,
+      limitPrice: input.limitPrice,
+      stopPrice: input.stopPrice,
+      stopLoss: input.stopLoss,
+      takeProfit: input.takeProfit,
+    });
     return order;
   },
 
   cancelOrder: async (id) => {
+    const existed = useOrderStore
+      .getState()
+      .pendingOrders.some((o) => o.id === id);
     set((state) => ({
       pendingOrders: state.pendingOrders.filter((o) => o.id !== id),
     }));
+    if (existed) {
+      const time =
+        useReplayStore.getState().currentBarTime ||
+        Math.floor(Date.now() / 1000);
+      attemptEventQueue.enqueue({
+        type: "cancel-order",
+        time,
+        orderId: id,
+      });
+    }
   },
 
   modifyOrder: async (id, changes) => {
+    const existed = useOrderStore
+      .getState()
+      .pendingOrders.some((o) => o.id === id);
     set((state) => ({
       pendingOrders: state.pendingOrders.map((o) =>
         o.id === id
@@ -229,9 +292,23 @@ export const useOrderStore = create<OrderState>((set) => ({
           : o,
       ),
     }));
+    if (existed) {
+      const time =
+        useReplayStore.getState().currentBarTime ||
+        Math.floor(Date.now() / 1000);
+      attemptEventQueue.enqueue({
+        type: "modify-order",
+        time,
+        orderId: id,
+        changes,
+      });
+    }
   },
 
   modifyPosition: async (id, changes) => {
+    const existed = useOrderStore
+      .getState()
+      .openPositions.some((p) => p.id === id);
     set((state) => ({
       openPositions: state.openPositions.map((p) =>
         p.id === id
@@ -243,6 +320,22 @@ export const useOrderStore = create<OrderState>((set) => ({
           : p,
       ),
     }));
+    if (existed) {
+      const time =
+        useReplayStore.getState().currentBarTime ||
+        Math.floor(Date.now() / 1000);
+      attemptEventQueue.enqueue({
+        type: "modify-position",
+        time,
+        positionId: id,
+        // Reducer expects {takeProfit, stopLoss}; orderStore uses
+        // legacy {tp, sl} keys. Translate at the event boundary.
+        changes: {
+          ...("tp" in changes ? { takeProfit: changes.tp } : {}),
+          ...("sl" in changes ? { stopLoss: changes.sl } : {}),
+        },
+      });
+    }
   },
 
   closePosition: async (id) => {
@@ -295,6 +388,26 @@ export const useOrderStore = create<OrderState>((set) => ({
       closedTrades: [...state.closedTrades, trade],
     }));
 
+    // v2.3 sub-phase 2: emit close-position (intent) + position-stop
+    // (the actual close with reason="manual"). The reducer consumes
+    // both: close-position validates the position exists; position-
+    // stop realizes P&L and removes it. Two events keep the user-
+    // intent vs engine-action distinction explicit in the log.
+    attemptEventQueue.enqueue({
+      type: "close-position",
+      time: currentBar.time,
+      positionId: id,
+    });
+    attemptEventQueue.enqueue({
+      type: "position-stop",
+      time: currentBar.time,
+      positionId: id,
+      reason: "manual",
+      closePrice,
+      realizedPnl: grossPnl,
+      commission,
+    });
+
     // Settle the realized P&L into the session balance. Lazy import to
     // avoid a circular dependency at module-load time.
     const { useSessionStore } = await import("@/stores/sessionStore");
@@ -309,6 +422,42 @@ export const useOrderStore = create<OrderState>((set) => ({
 
   applyBarResult: (engineResult, bar, instrument) => {
     const closuresApplied: { realizedPnl: number; trade: Trade }[] = [];
+
+    // v2.3 sub-phase 2: emit engine-derived events. Done OUTSIDE the
+    // set callback so each enqueue assigns a fresh seq via the queue's
+    // own monotonic counter rather than racing inside the reducer.
+    for (const f of engineResult.fills) {
+      attemptEventQueue.enqueue({
+        type: "order-fill",
+        time: f.filledAt,
+        orderId: f.orderId,
+        positionId: f.position.id,
+        fillPrice: f.filledPrice,
+        // Round-turn commission lands at CLOSE (matches
+        // computeCommission convention); fills are commission-free.
+        commission: 0,
+      });
+    }
+    for (const c of engineResult.closures) {
+      attemptEventQueue.enqueue({
+        type: "position-stop",
+        time: c.closeTime,
+        positionId: c.positionId,
+        reason: c.reason,
+        closePrice: c.closePrice,
+        // Closure carries NET realizedPnl; the reducer expects GROSS
+        // with commission separate. Reconstruct gross.
+        realizedPnl: c.realizedPnl + c.commission,
+        commission: c.commission,
+      });
+    }
+    for (const r of engineResult.rejections) {
+      attemptEventQueue.enqueue({
+        type: "cancel-order",
+        time: bar.time,
+        orderId: r.orderId,
+      });
+    }
 
     set((state) => {
       // 1. Apply fills: remove pending orders, push new positions.
@@ -352,6 +501,13 @@ export const useOrderStore = create<OrderState>((set) => ({
       //    Other-instrument positions flagged _pendingClose stay flagged and
       //    fill on their own next bar.
       const stillOpen: OpenPosition[] = [];
+      const manualCloseEvents: Array<{
+        positionId: string;
+        time: number;
+        closePrice: number;
+        grossPnl: number;
+        commission: number;
+      }> = [];
       for (const p of openPositions) {
         if (p._pendingClose && p.instrument === instrument.symbol) {
           const grossPnl = computePnl(
@@ -382,10 +538,37 @@ export const useOrderStore = create<OrderState>((set) => ({
           };
           newTrades.push(trade);
           closuresApplied.push({ realizedPnl, trade });
+          manualCloseEvents.push({
+            positionId: p.id,
+            time: bar.time,
+            closePrice: bar.open,
+            grossPnl,
+            commission,
+          });
         } else {
           stillOpen.push(p);
         }
       }
+      // v2.3 sub-phase 2: emit position-stop for manual closes that
+      // landed on this bar (the close-position intent event was
+      // already emitted when the user clicked X in the UI; this is
+      // the engine settlement). Defer the enqueue until after the
+      // set() call so the reducer applies these events in seq order
+      // alongside the engineResult-derived ones above. (The async
+      // dispatch is fine — they're all just appended to the queue.)
+      queueMicrotask(() => {
+        for (const ev of manualCloseEvents) {
+          attemptEventQueue.enqueue({
+            type: "position-stop",
+            time: ev.time,
+            positionId: ev.positionId,
+            reason: "manual",
+            closePrice: ev.closePrice,
+            realizedPnl: ev.grossPnl,
+            commission: ev.commission,
+          });
+        }
+      });
 
       // 5. Recompute unrealizedPnl ONLY on positions whose instrument matches
       //    the firing one. Other-instrument positions keep their last-known
@@ -422,8 +605,17 @@ export const useOrderStore = create<OrderState>((set) => ({
     // (computePnl/computeCommission already imported at file head.)
     const closeReason = reason === "liquidated" ? "liquidated" : "manual";
     const allOpen = useOrderStore.getState().openPositions;
+    const allPending = useOrderStore.getState().pendingOrders;
     const newTrades: Trade[] = [];
     let realizedDelta = 0;
+    const stopEventArgs: Array<{
+      positionId: string;
+      time: number;
+      reason: "liquidated" | "manual";
+      closePrice: number;
+      grossPnl: number;
+      commission: number;
+    }> = [];
 
     // Resolve each position's instrument synchronously; the registry import
     // is sync at module top-level. Each position closes at ITS instrument's
@@ -470,6 +662,14 @@ export const useOrderStore = create<OrderState>((set) => ({
       };
       newTrades.push(trade);
       realizedDelta += realizedPnl;
+      stopEventArgs.push({
+        positionId: pos.id,
+        time: currentBar.time,
+        reason: closeReason,
+        closePrice,
+        grossPnl,
+        commission,
+      });
     }
 
     // Single set: all positions cleared, all closed trades appended.
@@ -478,6 +678,37 @@ export const useOrderStore = create<OrderState>((set) => ({
       openPositions: [],
       closedTrades: [...state.closedTrades, ...newTrades],
     }));
+
+    // v2.3 sub-phase 2: emit liquidation event (if applicable) + a
+    // position-stop per force-closed position + cancel-order for any
+    // dropped pending orders. These run synchronously after the set,
+    // appending to the queue in the natural seq order. The
+    // `liquidation` event itself is emitted by providers.tsx BEFORE
+    // forceCloseAllPositions is invoked — see app/providers.tsx DQ
+    // handler. We don't double-emit it here.
+    const time =
+      stopEventArgs.length > 0
+        ? stopEventArgs[0].time
+        : useReplayStore.getState().currentBarTime ||
+          Math.floor(Date.now() / 1000);
+    for (const ev of stopEventArgs) {
+      attemptEventQueue.enqueue({
+        type: "position-stop",
+        time: ev.time,
+        positionId: ev.positionId,
+        reason: ev.reason,
+        closePrice: ev.closePrice,
+        realizedPnl: ev.grossPnl,
+        commission: ev.commission,
+      });
+    }
+    for (const o of allPending) {
+      attemptEventQueue.enqueue({
+        type: "cancel-order",
+        time,
+        orderId: o.id,
+      });
+    }
 
     return { realizedDelta, trades: newTrades };
   },

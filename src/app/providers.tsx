@@ -8,6 +8,7 @@ import { Toaster, toast } from "sonner";
 import { processBar } from "@/lib/engine/MatchingEngine";
 import { getInstrument } from "@/lib/instruments/instruments";
 import type { ReplayEngine } from "@/lib/engine/ReplayEngine";
+import { attemptEventQueue } from "@/lib/events/AttemptEventQueue";
 import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -59,6 +60,28 @@ export function Providers({ children }: { children: React.ReactNode }) {
      */
     const dqHandledSessions = new Set<string>();
 
+    /**
+     * v2.3 sub-phase 2: bar-tick sampling. We emit one `bar-tick`
+     * event to the attempt event log every ~60 seconds of replay
+     * time, regardless of which instrument fired. Uses the master-
+     * clock cadence (any engine's bar event is fine for the
+     * trigger). Roles:
+     *   1. D6 online detection — recent event in last 30s = online
+     *   2. Resume sanity — confirms the clock advanced through the
+     *      log as expected (currentBarTime is still the resume anchor)
+     *
+     * Per-session tracker so multi-instrument doesn't multiply the
+     * tick rate; one tick per 60s of replay time per session.
+     */
+    const lastBarTickByAttempt = new Map<string, number>();
+    const BAR_TICK_INTERVAL_SEC = 60;
+    const maybeEmitBarTick = (sessionId: string, time: number) => {
+      const last = lastBarTickByAttempt.get(sessionId) ?? -Infinity;
+      if (time - last < BAR_TICK_INTERVAL_SEC) return;
+      lastBarTickByAttempt.set(sessionId, time);
+      attemptEventQueue.enqueue({ type: "bar-tick", time });
+    };
+
     const wireEngine = (symbol: string, engine: ReplayEngine) => {
       // Track last forward index to skip backward-scrub events.
       let lastProcessedIndex = -1;
@@ -70,6 +93,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
         const session = useSessionStore.getState().activeSession;
         if (!session) return;
+
+        // Heartbeat sampling — one bar-tick per session per ≥60s
+        // replay-time. Cheap; reducer treats as a no-op; the Convex
+        // log row enables online-status inference for D6.
+        maybeEmitBarTick(session.id, event.bar.time);
 
         const instrument = getInstrument(symbol);
         const orderState = useOrderStore.getState();
@@ -126,12 +154,40 @@ export function Providers({ children }: { children: React.ReactNode }) {
           if (clock) clock.pause();
           else useReplayStore.getState().pause();
 
+          // v2.3 sub-phase 2: emit the liquidation event BEFORE
+          // forceCloseAllPositions so the event log reads naturally
+          // (rule breach → individual position-stop events from the
+          // force-close → finalize). On resume, the reducer sees the
+          // status flip to "liquidated" first; the per-position stops
+          // just realize their P&L into the already-liquidated state.
+          const balanceAtBreach = sessionState.balance;
+          const startingBalance =
+            useSessionStore.getState().activeSession?.startingBalance ??
+            balanceAtBreach;
+          const pnlPct =
+            startingBalance > 0
+              ? ((balanceAtBreach - startingBalance) / startingBalance) * 100
+              : 0;
+          attemptEventQueue.enqueue({
+            type: "liquidation",
+            time: event.bar.time,
+            // Map drawdown violation reasons onto the reducer's enum.
+            // Other rule breaches (e.g. maxLossPerTrade) would land
+            // here too once those checks are wired.
+            ruleBreached: "maxDrawdown",
+            finalBalance: balanceAtBreach,
+            pnlPct,
+          });
+
           // v2.2.5α: force-close every open position at its instrument's
           // current bar close. Without this the user sees a frozen replay
           // with positions still "open" forever — and worse, could place
           // new orders if any UI surface dodged the session.status guard.
           // Realized P&L from these closures settles into balance below
           // before endSession computes the final attempt.
+          // (forceCloseAllPositions itself emits a position-stop event
+          //  per closed position; together with the liquidation event
+          //  above they form the canonical liquidation tail of the log.)
           const { realizedDelta, trades: forced } = useOrderStore
             .getState()
             .forceCloseAllPositions("liquidated");

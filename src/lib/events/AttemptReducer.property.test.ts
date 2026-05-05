@@ -258,4 +258,318 @@ describe("AttemptReducer property tests", () => {
       }),
     );
   });
+
+  // ---- Property coverage for the remaining event types (per the
+  // sub-phase 2 deliverable: all 11 event types must have property
+  // tests). These exercise individual reducer transitions with
+  // randomized payloads.
+
+  it("modify-position: SL/TP changes apply to the targeted position (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.float({ min: Math.fround(1.0), max: Math.fround(1.5), noNaN: true }),
+        fc.float({ min: Math.fround(1.5), max: Math.fround(2.0), noNaN: true }),
+        (newSl, newTp) => {
+          // Bootstrap: start → submit-order → order-fill → modify-position.
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "submit-order",
+              orderId: "ord-1",
+              instrument: "EURUSD",
+              side: "buy",
+              orderType: "market",
+              size: 1,
+            },
+            {
+              seq: 2,
+              time: 1_700_000_120,
+              type: "order-fill",
+              orderId: "ord-1",
+              positionId: "pos-1",
+              fillPrice: 1.09,
+              commission: 0,
+            },
+            {
+              seq: 3,
+              time: 1_700_000_180,
+              type: "modify-position",
+              positionId: "pos-1",
+              changes: { stopLoss: newSl, takeProfit: newTp },
+            },
+          ];
+          const state = replayEvents(events);
+          expect(state.openPositions["pos-1"].stopLoss).toBe(newSl);
+          expect(state.openPositions["pos-1"].takeProfit).toBe(newTp);
+        },
+      ),
+    );
+  });
+
+  it("close-position: validates the position exists, leaves state intact (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom("buy" as const, "sell" as const),
+        fc.integer({ min: 1, max: 10 }),
+        (side, size) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "submit-order",
+              orderId: "ord-1",
+              instrument: "EURUSD",
+              side,
+              orderType: "market",
+              size,
+            },
+            {
+              seq: 2,
+              time: 1_700_000_120,
+              type: "order-fill",
+              orderId: "ord-1",
+              positionId: "pos-1",
+              fillPrice: 1.09,
+              commission: 0,
+            },
+            {
+              seq: 3,
+              time: 1_700_000_180,
+              type: "close-position",
+              positionId: "pos-1",
+            },
+          ];
+          const state = replayEvents(events);
+          // close-position is intent only — position still open until
+          // matching position-stop arrives.
+          expect(state.openPositions["pos-1"]).toBeDefined();
+          expect(state.lastSeq).toBe(3);
+        },
+      ),
+    );
+  });
+
+  it("order-fill: random fillPrice transforms pending order into open position (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.float({ min: Math.fround(1.05), max: Math.fround(1.15), noNaN: true }),
+        fc.float({ min: 0, max: 10, noNaN: true }),
+        (fillPrice, commission) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "submit-order",
+              orderId: "ord-1",
+              instrument: "EURUSD",
+              side: "buy",
+              orderType: "limit",
+              size: 1,
+              limitPrice: fillPrice,
+            },
+            {
+              seq: 2,
+              time: 1_700_000_120,
+              type: "order-fill",
+              orderId: "ord-1",
+              positionId: "pos-1",
+              fillPrice,
+              commission,
+            },
+          ];
+          const state = replayEvents(events);
+          expect(state.pendingOrders).toEqual({});
+          expect(state.openPositions["pos-1"].entryPrice).toBe(fillPrice);
+          expect(state.balance).toBeCloseTo(10_000 - commission, 6);
+        },
+      ),
+    );
+  });
+
+  it("position-stop: realized P&L flows into balance (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.float({ min: Math.fround(-200), max: Math.fround(200), noNaN: true }),
+        fc.float({ min: 0, max: 10, noNaN: true }),
+        fc.constantFrom("manual" as const, "tp" as const, "sl" as const),
+        (realizedPnl, commission, reason) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "submit-order",
+              orderId: "ord-1",
+              instrument: "EURUSD",
+              side: "buy",
+              orderType: "market",
+              size: 1,
+            },
+            {
+              seq: 2,
+              time: 1_700_000_120,
+              type: "order-fill",
+              orderId: "ord-1",
+              positionId: "pos-1",
+              fillPrice: 1.09,
+              commission: 0,
+            },
+            {
+              seq: 3,
+              time: 1_700_000_180,
+              type: "position-stop",
+              positionId: "pos-1",
+              reason,
+              closePrice: 1.10,
+              realizedPnl,
+              commission,
+            },
+          ];
+          const state = replayEvents(events);
+          expect(state.openPositions).toEqual({});
+          expect(state.closedTrades).toHaveLength(1);
+          expect(state.closedTrades[0].closeReason).toBe(reason);
+          expect(state.balance).toBeCloseTo(
+            10_000 + realizedPnl - commission,
+            6,
+          );
+        },
+      ),
+    );
+  });
+
+  it("liquidation: any rule breach flips status to liquidated (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          "maxDrawdown" as const,
+          "maxLossPerTrade" as const,
+          "other" as const,
+        ),
+        fc.float({ min: Math.fround(-100), max: Math.fround(100), noNaN: true }),
+        (rule, pnlPct) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "liquidation",
+              ruleBreached: rule,
+              finalBalance: 9_000,
+              pnlPct,
+            },
+          ];
+          const state = replayEvents(events);
+          expect(state.status).toBe("liquidated");
+          expect(state.liquidation?.ruleBreached).toBe(rule);
+        },
+      ),
+    );
+  });
+
+  it("bar-tick: any time advances seq but leaves state intact (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1_000_000_000, max: 2_000_000_000 }),
+        (time) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            { seq: 1, time, type: "bar-tick" },
+          ];
+          const state = replayEvents(events);
+          expect(state.lastSeq).toBe(1);
+          expect(state.balance).toBe(10_000);
+          expect(state.status).toBe("in-flight");
+        },
+      ),
+    );
+  });
+
+  it("submit-final: any final stats flip status to completed (100 runs)", () => {
+    fc.assert(
+      fc.property(
+        fc.float({ min: 0, max: Math.fround(1_000_000), noNaN: true }),
+        fc.float({ min: Math.fround(-100), max: Math.fround(1000), noNaN: true }),
+        fc.integer({ min: 0, max: 10_000 }),
+        fc.float({ min: 0, max: 100, noNaN: true }),
+        (finalBalance, pnlPct, trades, winRate) => {
+          const events: AttemptEvent[] = [
+            {
+              seq: 0,
+              time: 1_700_000_000,
+              type: "start",
+              startingBalance: 10_000,
+              battleId: "b",
+              instruments: ["EURUSD"],
+              rules: {},
+            },
+            {
+              seq: 1,
+              time: 1_700_000_060,
+              type: "submit-final",
+              finalBalance,
+              pnlPct,
+              trades,
+              winRate,
+            },
+          ];
+          const state = replayEvents(events);
+          expect(state.status).toBe("completed");
+          expect(state.finalizedAt).toBe(1_700_000_060);
+        },
+      ),
+    );
+  });
 });
