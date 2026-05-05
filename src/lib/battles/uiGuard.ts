@@ -13,6 +13,10 @@ import { checkBattleRule, type SubmittableOrderDraft } from "./guards";
  * toast) if a battle rule blocks it. The orderStore.submitOrder backstop
  * still runs — this function exists for inline UX feedback so the user
  * sees the violation message before the order round-trips.
+ *
+ * Note (v2.2.5α): when battles set requireStopLoss, this guard rejects
+ * orders without an SL. Order-entry surfaces should expose a pips-or-price
+ * SL input so the user can attach one before submitting.
  */
 export function uiPreCheckBattleRule(
   draft: SubmittableOrderDraft & { instrument: string },

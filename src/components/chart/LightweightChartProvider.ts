@@ -74,6 +74,11 @@ export const createLightweightChart: ChartProviderFactory = ({
       borderColor: theme.borderColor,
       timeVisible: true,
       secondsVisible: false,
+      // v2.2.5α: trailing space between the latest bar and the right price
+      // scale. Applies to all scroll positions (auto-fit, scrollToRealTime,
+      // user pan-to-end). Without this, candles butt up against the price
+      // axis labels, which read as cramped.
+      rightOffset: 12,
     },
   });
 
@@ -199,6 +204,13 @@ export const createLightweightChart: ChartProviderFactory = ({
       const initial = ts.getVisibleRange();
       handler(initial);
       return () => ts.unsubscribeVisibleTimeRangeChange(handler);
+    },
+
+    scrollToLatestBar() {
+      // Lightweight Charts' built-in jump-to-realtime. Resets the visible
+      // range so the most recent bar sits at the right edge with the
+      // library's default trailing offset.
+      chart.timeScale().scrollToRealTime();
     },
 
     destroy() {

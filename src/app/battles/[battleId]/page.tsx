@@ -160,9 +160,17 @@ export default function BattleDetailPage({
     setStarting(true);
     try {
       useOrderStore.getState().resetForSession();
+      // v2.2.5α: pass the full instruments[] when present so the trade view
+      // boots all engines. Falls back to single instrument for v1 / legacy
+      // single-asset battles.
+      const instruments =
+        view.battle.instruments && view.battle.instruments.length > 0
+          ? view.battle.instruments
+          : [view.battle.instrument];
       const session = await useSessionStore.getState().startSession({
         name: `${view.battle.name} · attempt`,
-        instrument: view.battle.instrument,
+        instrument: instruments[0],
+        instruments,
         startBarTime: view.battle.startBarTime,
         startingBalance: view.battle.startingBalance,
         battle: view.battle,

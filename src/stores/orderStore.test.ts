@@ -28,7 +28,14 @@ const makeBar = (o: Partial<Bar> = {}): Bar => ({
 function seedEngineWithBar(bar: Bar) {
   const engine = new ReplayEngine();
   engine.load([bar], 0);
+  // v2.2.5α: register the engine in the multi-instrument Map under the
+  // EURUSD symbol so getEngine("EURUSD") finds it. Active instrument is
+  // EURUSD so legacy `engine` reads also resolve.
+  const engines = new Map<string, ReplayEngine>();
+  engines.set(EURUSD.symbol, engine);
   useReplayStore.setState({
+    engines,
+    activeInstrument: EURUSD.symbol,
     engine,
     currentBarTime: bar.time,
     currentBarIndex: 0,
@@ -53,6 +60,8 @@ describe("orderStore.applyBarResult — engine seam", () => {
   beforeEach(() => {
     useOrderStore.getState().resetForSession();
     useReplayStore.setState({
+      engines: new Map(),
+      activeInstrument: null,
       engine: null,
       currentBarTime: 0,
       currentBarIndex: 0,

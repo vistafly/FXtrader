@@ -29,6 +29,13 @@ export class ReplayEngine {
   private playing = false;
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private readonly subscribers = new Set<ReplaySubscriber>();
+  /**
+   * v2.2.5: stable reference to the visible-bars slice. Returned from
+   * getVisibleBars() until the index changes. Required so BarAggregator's
+   * (timeframe, lastBarTime, sourceBarsRef) cache key produces hits across
+   * repeated chart re-renders within the same bar.
+   */
+  private visibleBarsCache: Bar[] | null = null;
 
   // ---- Lifecycle ----------------------------------------------------------
 
@@ -39,6 +46,7 @@ export class ReplayEngine {
     this.cancelTimer();
     this.bars = bars;
     this.currentIndex = clamp(startIndex, 0, bars.length - 1);
+    this.invalidateVisibleBarsCache();
     this.playing = false;
     this.emit({
       type: "load",
@@ -77,6 +85,7 @@ export class ReplayEngine {
     if (next < 0 || next >= this.bars.length) return;
 
     this.currentIndex = next;
+    this.invalidateVisibleBarsCache();
     this.emit({
       type: "bar",
       bar: this.bars[this.currentIndex],
@@ -99,6 +108,7 @@ export class ReplayEngine {
     if (wasPlaying) this.pause();
 
     this.currentIndex = clamp(index, 0, this.bars.length - 1);
+    this.invalidateVisibleBarsCache();
     this.emit({ type: "seek", index: this.currentIndex });
     this.emit({
       type: "bar",
@@ -115,6 +125,61 @@ export class ReplayEngine {
     if (this.bars.length === 0) return;
     const idx = this.bars.findIndex((b) => b.time >= unixSeconds);
     this.seekToIndex(idx === -1 ? this.bars.length - 1 : idx);
+  }
+
+  /**
+   * v2.2.5: bidirectional seek to the LATEST bar with bar.time <= targetTime.
+   * Used by MasterClock so closed-market instruments (no bar at the master
+   * clock's current time) stay at the last bar that DID have data, matching
+   * the "market state" semantics. Distinct from seekToTime which prefers
+   * at-or-after for "I want to start FROM this time" UX.
+   *
+   * If no bar has time <= target, clamps to the first bar (best available).
+   */
+  seekToOrBefore(targetTime: number): void {
+    if (this.bars.length === 0) return;
+    let idx = -1;
+    for (let i = 0; i < this.bars.length; i++) {
+      if (this.bars[i].time <= targetTime) idx = i;
+      else break;
+    }
+    if (idx === -1) idx = 0;
+    this.seekToIndex(idx);
+  }
+
+  /**
+   * v2.2.5: external drive used by MasterClock to advance N engines in lockstep
+   * against a shared market time. Moves currentIndex forward to the latest bar
+   * with bar.time <= targetTime. Engines whose data doesn't include a bar at
+   * the target time (closed market) simply don't move — their currentIndex
+   * stays put and no event is emitted.
+   *
+   * Forward-only: if targetTime is before the current bar's time, no-op.
+   * Independent of play/pause state — passive advancement only.
+   * Emits a single "bar" event when the index advances; emits "end" when the
+   * advancement reaches the last bar (matching tick() semantics).
+   */
+  advanceTo(targetTime: number): void {
+    if (this.bars.length === 0) return;
+    let nextIndex = this.currentIndex;
+    for (let i = this.currentIndex + 1; i < this.bars.length; i++) {
+      if (this.bars[i].time <= targetTime) {
+        nextIndex = i;
+      } else {
+        break;
+      }
+    }
+    if (nextIndex === this.currentIndex) return;
+    this.currentIndex = nextIndex;
+    this.invalidateVisibleBarsCache();
+    this.emit({
+      type: "bar",
+      bar: this.bars[this.currentIndex],
+      index: this.currentIndex,
+    });
+    if (this.currentIndex >= this.bars.length - 1) {
+      this.emit({ type: "end" });
+    }
   }
 
   // ---- Accessors ----------------------------------------------------------
@@ -139,9 +204,15 @@ export class ReplayEngine {
     return this.getCurrentBar()?.close ?? null;
   }
 
-  /** Bars from start through and including the current index. */
+  /**
+   * Bars from start through and including the current index.
+   * Cached (returned by-reference) until currentIndex changes — see
+   * `visibleBarsCache`. Required for BarAggregator memoization.
+   */
   getVisibleBars(): Bar[] {
-    return this.bars.slice(0, this.currentIndex + 1);
+    if (this.visibleBarsCache !== null) return this.visibleBarsCache;
+    this.visibleBarsCache = this.bars.slice(0, this.currentIndex + 1);
+    return this.visibleBarsCache;
   }
 
   getTotalBars(): number {
@@ -183,6 +254,7 @@ export class ReplayEngine {
       return;
     }
     this.currentIndex += 1;
+    this.invalidateVisibleBarsCache();
     this.emit({
       type: "bar",
       bar: this.bars[this.currentIndex],
@@ -205,6 +277,24 @@ export class ReplayEngine {
 
   private emit(event: ReplayEvent): void {
     for (const sub of this.subscribers) sub(event);
+  }
+
+  private invalidateVisibleBarsCache(): void {
+    this.visibleBarsCache = null;
+  }
+
+  /**
+   * v2.2.5: explicit teardown for MasterClock.disposeEngines(). Clears the
+   * timer if any, drops subscribers, drops bars + cache. After dispose() the
+   * engine should not be used.
+   */
+  dispose(): void {
+    this.cancelTimer();
+    this.playing = false;
+    this.subscribers.clear();
+    this.bars = [];
+    this.visibleBarsCache = null;
+    this.currentIndex = 0;
   }
 }
 

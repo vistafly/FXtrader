@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { checkMaxDrawdown } from "@/lib/battles/guards";
+import { getInstrument } from "@/lib/instruments/instruments";
 import { battleRepository } from "@/lib/repository/BattleRepository";
 import { sessionRepository } from "@/lib/repository/SessionRepository";
 import { tradeRepository } from "@/lib/repository/TradeRepository";
@@ -21,7 +22,10 @@ const nextAttemptId = () =>
 
 export interface StartSessionParams {
   name: string;
+  /** Primary/legacy instrument. v1: the one. v2.2.5α multi-asset: should match instruments[0]. */
   instrument: string;
+  /** v2.2.5α: full multi-asset list. Caller passes this for multi-instrument battles. */
+  instruments?: string[];
   startBarTime: number;
   startingBalance: number;
   /** Optional battle to attach this session to. Battle rules apply to all
@@ -83,11 +87,22 @@ export interface SessionState {
    * Adds realized P&L to balance, recomputes equity, and tells the caller
    * whether the battle's maxDrawdownPct rule has been breached so the
    * orchestrator can pause + DQ in a single response.
+   *
+   * v2.2.5α: openPositions may span multiple instruments. Margin is computed
+   * per-position using each position's own instrument spec (resolved via
+   * getInstrument). The `instrumentSymbol` hint identifies which instrument's
+   * bar triggered this settlement, for any per-instrument bookkeeping.
    */
   applyBarSettlement: (params: {
     closures: { realizedPnl: number; trade: Trade }[];
     openPositions: OpenPosition[];
-    instrument: Instrument;
+    /** Instrument hint — only the symbol that just ticked. */
+    instrumentSymbol?: string;
+    /**
+     * Optional pre-resolved instrument spec for the ticking symbol. If absent,
+     * applyBarSettlement resolves per-position via getInstrument(p.instrument).
+     */
+    instrument?: Instrument;
     currentPrice: number;
     currentBarTime: number;
   }) => { drawdownViolation: string | null };
@@ -106,6 +121,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       id: nextSessionId(),
       name: params.name,
       instrument: params.instrument,
+      instruments: params.instruments,
       startBarTime: params.startBarTime,
       currentBarTime: params.startBarTime,
       startingBalance: params.startingBalance,
@@ -116,6 +132,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       speedSetting: 1,
       battleId: params.battle?.id,
       battleSource: params.battle ? (params.battleSource ?? "local") : undefined,
+      // v2.2.5α: snapshot the battle config so loadSession can restore the
+      // rules without a Convex fetch on reload. Server-battle rules were
+      // silently disabled on reload because battleRepository (Dexie) had
+      // no row to return.
+      battleSnapshot: params.battle,
     };
 
     await sessionRepository.put(session);
@@ -213,7 +234,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!session) throw new Error(`Session not found: ${id}`);
     let battle: Battle | null = null;
     if (session.battleId) {
-      battle = (await battleRepository.getBattle(session.battleId)) ?? null;
+      // Prefer the snapshot persisted with the session — this is the only
+      // path that works for server battles on reload (battleRepository is
+      // Dexie-backed and never sees Convex battle rows). Local battles
+      // have a snapshot too; this read avoids the Dexie roundtrip.
+      if (session.battleSnapshot) {
+        battle = session.battleSnapshot as Battle;
+      } else {
+        battle =
+          (await battleRepository.getBattle(session.battleId)) ?? null;
+      }
     }
     set({
       activeSession: session,
@@ -227,7 +257,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   applyBarSettlement: ({
     closures,
     openPositions,
-    instrument,
     currentPrice,
     currentBarTime,
   }) => {
@@ -240,10 +269,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       0,
     );
     const equity = newBalance + totalUnrealized;
-    const marginUsed = openPositions.reduce(
-      (sum, p) => sum + instrument.marginPerContract * p.size,
-      0,
-    );
+    // v2.2.5α: positions may span instruments. Resolve each position's
+    // instrument spec lazily so margin aggregates correctly across them.
+    const marginUsed = openPositions.reduce((sum, p) => {
+      const inst = getInstrument(p.instrument);
+      return sum + inst.marginPerContract * p.size;
+    }, 0);
 
     if (closures.length > 0) {
       void tradeRepository.bulkAdd(closures.map((c) => c.trade));

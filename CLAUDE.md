@@ -1131,16 +1131,52 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   (1-5) but trade view plays `instruments[0]` only — full per-instrument
   switching is v2.2.5. Many-attempts-per-user model (resumable
   single-attempt is v2.3).
-- **v2.2.5** ⏳ next — Full multi-asset trade view. Trade view supports
-  switching between the battle's 1-5 instruments mid-attempt with
-  per-instrument chart state, shared account balance, and
-  cross-instrument position aggregation. Eight D-decisions to be planned
-  with D1 (replay engine sync — one engine vs per-instrument vs
-  swap-on-switch) leading; D2-D8 downstream of D1's choice (account
-  model, switching UI, bar timestamp alignment, chart state per
-  instrument, positions table layout, mid-attempt server sync, rule
-  scope). 2-3 days of work; security-boundary phase, full new gate
-  format applies.
+- **v2.2.5** ✅ shipped May 2026 — Multi-instrument engine + multi-pane
+  workspace + on-chart trading interactions. The originally-planned α/β
+  split (foundation first, then configurability) collapsed into one
+  bundled release because user-driven iteration kept pulling β items
+  forward during α implementation. Shipped scope:
+    - **Engine**: `MasterClock` coordinator owning N `ReplayEngine`s under
+      one shared market clock; `ReplayEngine.advanceTo(time)` external
+      drive + `seekToOrBefore` + `dispose`; `BarAggregator` with
+      `(timeframe, lastBarTime, sourceBarsRef)` cache key + live-candle
+      convention.
+    - **Stores**: `replayStore.engines: Map<symbol, ReplayEngine>` +
+      `masterClock` + `setActiveInstrument` + `getEngine` + lifecycle
+      dispose; `loadInstrumentsMulti` mid-dataset clamp; `orderStore`
+      routes through per-instrument engines and filters re-marks to the
+      firing instrument (multi-instrument P&L correctness);
+      `forceCloseAllPositions("liquidated")`; `sessionStore.applyBarSettlement`
+      aggregates margin across instruments; `battleSnapshot` on Session
+      so server-battle rules survive reload.
+    - **Layout**: `layoutStore` with full configurability — `LayoutSelector`
+      (1/2v/2h/4q/6-pane), per-pane instrument dropdown, per-pane timeframe
+      selector (auto-fade on 2s idle), drag-resize splitter overlays via
+      gridSplits, Today jump button (visibility tied to `paneIsAtLatest`);
+      `ChartGrid` + `ChartPane` with click-to-focus and U3 (focus change
+      closes any open Place Order dialog).
+    - **U5 persistence**: 2s periodic save of openPositions, pendingOrders,
+      layoutState, currentBarTime, balance to Dexie; boot restore seeks
+      master clock to currentBarTime and rehydrates positions/orders.
+    - **Trading UX**: QuickBuySellPanel unit toggle (pips/USD/%) with
+      commission-aware delta conversion + inverse for unit cycling;
+      pre-trade SL/TP/trigger preview lines anchored to staging trigger;
+      draggable preview chip via `PreviewTriggerDrag`; on-chart
+      `PositionDragOverlay` chips for position entry/TP/SL and pending-
+      order trigger/TP/SL with X-close on entry and live limit/stop;
+      live-trigger drag past SL/TP grays the offending chip and drops
+      (or replaces, for require-SL battles) on release; immediate-trigger
+      validation; PlaceOrderDialog pips↔price dual inputs.
+    - **Liquidation**: idempotent DQ handler (Set guard against multi-
+      engine fire) → force-close → pause clock → endSession +
+      submitToServer → SessionEndedOverlay with full battle summary +
+      back-to-battle href that respects `${battleSource}-${battleId}`
+      prefix; submitOrder blocked when session.status === "ended".
+- **v2.2.6** ⏳ next — Workspace polish leftover from 5β scope:
+  closed-market overlay per pane (D4) when an instrument's session
+  is closed; position-count badges per pane (U2); per-pane scroll
+  position persistence (extend `layoutState` to include visible-range
+  timestamps; restore on boot). Light gate format.
 - **v2.3** ⏳ after v2.2.5 — Battle context UI + resumable attempts.
   Meaty phase, possibly larger than v2.2.5. Includes:
     - Countdown timer in the trade view ("Time Remaining 00:54:51")
@@ -1173,8 +1209,8 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   once real usage surfaces friction. Cannot be pre-planned; informed
   by actual use.
 
-Phases v2.1–v2.2 are complete. v2.2.5 is next, then v2.3 / v2.4 / v2.5
-in that order.
+Phases v2.1–v2.2.5 are complete. v2.2.6 is shipping next (workspace
+polish leftover from the 5β scope), then v2.3 / v2.4 / v2.5.
 
 ### Decisions baked into v2.0 (and the why)
 

@@ -84,10 +84,13 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
     },
   });
 
-  // Reset to current price suggestions when the dialog opens
+  // Reset to current price suggestions when the dialog opens.
+  // v2.2.5α: read the per-instrument engine, not the global active one,
+  // so the dialog's pivot is correct even when opened for a non-focused pane.
   useEffect(() => {
     if (!open) return;
-    const price = useReplayStore.getState().engine?.getCurrentPrice() ?? 0;
+    const price =
+      useReplayStore.getState().getEngine(symbol)?.getCurrentPrice() ?? 0;
     form.reset({
       type: "market",
       size: defaultSize,
@@ -96,12 +99,76 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
       stopLoss: undefined,
       takeProfit: undefined,
     });
-  }, [open, defaultSize, form, inst.priceDecimals]);
+  }, [open, defaultSize, form, inst.priceDecimals, symbol]);
 
-  // RHF's watch returns a fresh function each render. The compiler-incompatible
-  // warning is intentional: we want the type field to drive a re-render.
+  // RHF's watch() can't be memoized; the rule is informational. We rely on
+  // the dialog's form-driven re-render cadence — pip↔price conversion stays
+  // current because every input edit triggers a re-render via watch.
   // eslint-disable-next-line react-hooks/incompatible-library
   const orderType: OrderType = form.watch("type");
+  const watchedLimit = form.watch("limitPrice");
+  const watchedStopP = form.watch("stopPrice");
+  const watchedSl = form.watch("stopLoss");
+  const watchedTp = form.watch("takeProfit");
+
+  // Pivot = the price the order will fill at. Drives pip↔price conversion
+  // for SL / TP. Recomputed on each render so the UI tracks form edits live.
+  const pivotPrice =
+    orderType === "market"
+      ? (useReplayStore.getState().getEngine(symbol)?.getCurrentPrice() ?? 0)
+      : orderType === "limit"
+        ? Number(watchedLimit ?? 0)
+        : Number(watchedStopP ?? 0);
+
+  // Helpers: pips ↔ price. Pivot of 0 disables conversion (e.g. before
+  // the engine has a current bar or before user enters a limit price).
+  const priceToPips = (price: number | undefined) => {
+    if (price == null || pivotPrice <= 0) return "";
+    const pips = Math.abs(pivotPrice - price) / inst.pipSize;
+    if (!Number.isFinite(pips)) return "";
+    return pips.toFixed(1);
+  };
+  const slPipsDisplay = priceToPips(
+    watchedSl != null ? Number(watchedSl) : undefined,
+  );
+  const tpPipsDisplay = priceToPips(
+    watchedTp != null ? Number(watchedTp) : undefined,
+  );
+
+  const onSlPipsChange = (raw: string) => {
+    if (raw === "") {
+      form.setValue("stopLoss", undefined, { shouldValidate: false });
+      return;
+    }
+    const pips = Number(raw);
+    if (!Number.isFinite(pips) || pips <= 0 || pivotPrice <= 0) return;
+    const delta = pips * inst.pipSize;
+    const newPrice = side === "buy" ? pivotPrice - delta : pivotPrice + delta;
+    form.setValue("stopLoss", Number(newPrice.toFixed(inst.priceDecimals)), {
+      shouldValidate: false,
+    });
+  };
+  const onTpPipsChange = (raw: string) => {
+    if (raw === "") {
+      form.setValue("takeProfit", undefined, { shouldValidate: false });
+      return;
+    }
+    const pips = Number(raw);
+    if (!Number.isFinite(pips) || pips <= 0 || pivotPrice <= 0) return;
+    const delta = pips * inst.pipSize;
+    const newPrice = side === "buy" ? pivotPrice + delta : pivotPrice - delta;
+    form.setValue(
+      "takeProfit",
+      Number(newPrice.toFixed(inst.priceDecimals)),
+      { shouldValidate: false },
+    );
+  };
+
+  // Battle's requireStopLoss flag — drives the inline "required" badge and
+  // the disabled state of the submit button when SL is missing.
+  const battle = useSessionStore((s) => s.activeBattle);
+  const slRequired = !!battle?.rules?.requireStopLoss;
+  const slMissing = slRequired && (watchedSl == null || watchedSl === "");
 
   const onSubmit = form.handleSubmit(async (values) => {
     if (!session) {
@@ -196,23 +263,58 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
               </>
             )}
 
-            <label className="text-xs uppercase tracking-wide text-muted-foreground">Stop loss</label>
-            <Input
-              type="number"
-              step={step}
-              {...form.register("stopLoss")}
-              className="h-8 font-mono text-sm"
-              placeholder="optional"
-            />
+            <label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Stop loss
+              {slRequired && (
+                <span className="ml-1 font-mono text-[9px] uppercase tracking-[0.2em] text-bear">
+                  required
+                </span>
+              )}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="number"
+                step={step}
+                min={0}
+                value={slPipsDisplay}
+                onChange={(e) => onSlPipsChange(e.target.value)}
+                className="h-8 font-mono text-sm"
+                placeholder="pips"
+                aria-label="Stop loss distance in pips"
+              />
+              <Input
+                type="number"
+                step={step}
+                {...form.register("stopLoss")}
+                className="h-8 font-mono text-sm"
+                placeholder="price"
+                aria-label="Stop loss price"
+              />
+            </div>
 
-            <label className="text-xs uppercase tracking-wide text-muted-foreground">Take profit</label>
-            <Input
-              type="number"
-              step={step}
-              {...form.register("takeProfit")}
-              className="h-8 font-mono text-sm"
-              placeholder="optional"
-            />
+            <label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Take profit
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="number"
+                step={step}
+                min={0}
+                value={tpPipsDisplay}
+                onChange={(e) => onTpPipsChange(e.target.value)}
+                className="h-8 font-mono text-sm"
+                placeholder="pips"
+                aria-label="Take profit distance in pips"
+              />
+              <Input
+                type="number"
+                step={step}
+                {...form.register("takeProfit")}
+                className="h-8 font-mono text-sm"
+                placeholder="price"
+                aria-label="Take profit price"
+              />
+            </div>
           </div>
 
           {form.formState.errors.limitPrice && (
@@ -229,7 +331,15 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <button type="submit" className={cn("rounded-full px-6 py-2 text-sm font-semibold transition-opacity hover:opacity-90", sideColor)}>
+            <button
+              type="submit"
+              disabled={slMissing}
+              title={slMissing ? "Stop loss required by battle rules" : undefined}
+              className={cn(
+                "rounded-full px-6 py-2 text-sm font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
+                sideColor,
+              )}
+            >
               {side === "buy" ? "Place buy" : "Place sell"}
             </button>
           </DialogFooter>

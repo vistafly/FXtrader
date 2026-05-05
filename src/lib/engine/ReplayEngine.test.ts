@@ -211,6 +211,130 @@ describe("ReplayEngine — seek", () => {
   });
 });
 
+describe("ReplayEngine — advanceTo (master-clock drive)", () => {
+  it("advances to the latest bar at-or-before the target time", () => {
+    const engine = new ReplayEngine();
+    const bars = makeSampleBars(10, 1_700_000_000);
+    engine.load(bars, 0);
+
+    // bars[5].time === 1_700_000_300; target one second past that
+    engine.advanceTo(1_700_000_301);
+    expect(engine.getCurrentIndex()).toBe(5);
+  });
+
+  it("emits exactly one bar event per advance, regardless of bars skipped", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(10, 1_700_000_000), 0);
+
+    const barEvents: ReplayEvent[] = [];
+    engine.subscribe((e) => {
+      if (e.type === "bar") barEvents.push(e);
+    });
+    barEvents.length = 0;
+
+    // Skip 7 bars in a single advance.
+    engine.advanceTo(1_700_000_000 + 7 * 60);
+    expect(barEvents).toHaveLength(1);
+    expect((barEvents[0] as { index: number }).index).toBe(7);
+  });
+
+  it("emits nothing if target time hasn't reached the next bar", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(10, 1_700_000_000), 0);
+
+    const barEvents: ReplayEvent[] = [];
+    engine.subscribe((e) => {
+      if (e.type === "bar") barEvents.push(e);
+    });
+    barEvents.length = 0;
+
+    // bars[1].time === 1_700_000_060; target is just before that.
+    engine.advanceTo(1_700_000_059);
+    expect(barEvents).toHaveLength(0);
+    expect(engine.getCurrentIndex()).toBe(0);
+  });
+
+  it("is forward-only: target before current bar is a no-op", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(10, 1_700_000_000), 5);
+
+    const barEvents: ReplayEvent[] = [];
+    engine.subscribe((e) => {
+      if (e.type === "bar") barEvents.push(e);
+    });
+    barEvents.length = 0;
+
+    engine.advanceTo(1_700_000_120); // bars[2].time
+    expect(engine.getCurrentIndex()).toBe(5);
+    expect(barEvents).toHaveLength(0);
+  });
+
+  it("emits 'end' when advancing reaches the last bar", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(5, 1_700_000_000), 0);
+
+    const events: ReplayEvent[] = [];
+    engine.subscribe((e) => events.push(e));
+
+    engine.advanceTo(9_999_999_999);
+    expect(engine.getCurrentIndex()).toBe(4);
+    expect(events.some((e) => e.type === "end")).toBe(true);
+  });
+});
+
+describe("ReplayEngine — getVisibleBars caching", () => {
+  it("returns the same array reference until the index changes", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(10), 5);
+
+    const a = engine.getVisibleBars();
+    const b = engine.getVisibleBars();
+    expect(a).toBe(b); // same reference
+
+    engine.step("forward");
+    const c = engine.getVisibleBars();
+    expect(c).not.toBe(a); // index changed → new reference
+    expect(c).toHaveLength(7);
+  });
+
+  it("cache invalidates on advanceTo", () => {
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(10, 1_700_000_000), 0);
+
+    const a = engine.getVisibleBars();
+    engine.advanceTo(1_700_000_180); // moves to index 3
+    const b = engine.getVisibleBars();
+    expect(b).not.toBe(a);
+    expect(b).toHaveLength(4);
+  });
+});
+
+describe("ReplayEngine — dispose", () => {
+  it("cancels timers, clears subscribers, and zeroes state", () => {
+    vi.useFakeTimers();
+    const engine = new ReplayEngine();
+    engine.load(makeSampleBars(50), 0);
+
+    let count = 0;
+    engine.subscribe(() => count++);
+
+    engine.play();
+    expect(engine.isPlaying()).toBe(true);
+
+    engine.dispose();
+    expect(engine.isPlaying()).toBe(false);
+    expect(engine.getCurrentBar()).toBeNull();
+    expect(engine.getTotalBars()).toBe(0);
+
+    // No subscribers should fire after dispose; no timers should remain.
+    const stamp = count;
+    vi.advanceTimersByTime(10_000);
+    expect(count).toBe(stamp);
+
+    vi.useRealTimers();
+  });
+});
+
 describe("ReplayEngine — subscription lifecycle", () => {
   it("subscribe returns an unsubscribe function", () => {
     const engine = new ReplayEngine();

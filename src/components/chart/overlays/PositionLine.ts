@@ -36,6 +36,8 @@ const positionEntryId = (id: string) => `pos-${id}-entry`;
 const positionTpId = (id: string) => `pos-${id}-tp`;
 const positionSlId = (id: string) => `pos-${id}-sl`;
 const orderTriggerId = (id: string) => `ord-${id}-trigger`;
+const orderTpId = (id: string) => `ord-${id}-tp`;
+const orderSlId = (id: string) => `ord-${id}-sl`;
 
 export function drawPositionLines(handle: ChartProviderHandle, position: Position): void {
   const inst = getInstrument(position.instrument);
@@ -113,8 +115,39 @@ export function drawPendingOrderLine(handle: ChartProviderHandle, order: Order):
     lineWidth: 1,
     title: "",
   });
+
+  // v2.2.5α: also render the SL/TP lines for the PENDING order — anchored
+  // to the trigger price, so the user sees the full intended setup before
+  // the order fills. Once the order fills (becomes a Position),
+  // drawPositionLines takes over with the post-fill entry/TP/SL lines.
+  if (order.takeProfit !== undefined) {
+    handle.upsertPriceLine({
+      id: orderTpId(order.id),
+      price: order.takeProfit,
+      color: COLORS.bull,
+      lineStyle: "dashed",
+      lineWidth: 1,
+      title: "TP",
+    });
+  } else {
+    handle.removePriceLine(orderTpId(order.id));
+  }
+  if (order.stopLoss !== undefined) {
+    handle.upsertPriceLine({
+      id: orderSlId(order.id),
+      price: order.stopLoss,
+      color: COLORS.bear,
+      lineStyle: "dashed",
+      lineWidth: 1,
+      title: "SL",
+    });
+  } else {
+    handle.removePriceLine(orderSlId(order.id));
+  }
 }
 
 export function clearPendingOrderLine(handle: ChartProviderHandle, order: Order): void {
   handle.removePriceLine(orderTriggerId(order.id));
+  handle.removePriceLine(orderTpId(order.id));
+  handle.removePriceLine(orderSlId(order.id));
 }

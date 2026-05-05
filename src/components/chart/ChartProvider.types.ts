@@ -69,6 +69,13 @@ export interface ChartProviderHandle {
     listener: (range: { from: number; to: number } | null) => void,
   ): () => void;
 
+  /**
+   * v2.2.5α: scroll the visible range to the right edge (latest bar). Used by
+   * the per-pane "Go to today" jump button when the user has panned far back
+   * in history and wants to snap to the playhead.
+   */
+  scrollToLatestBar(): void;
+
   /** Tear down the underlying chart instance. Caller must drop the handle. */
   destroy(): void;
 }
