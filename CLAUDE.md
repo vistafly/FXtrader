@@ -1199,12 +1199,18 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   ±1hr around DST changeovers vs. real exchange clock; acceptable
   trade-off for a replay simulator. CME 22:00–23:00 UTC weekday
   maintenance break also not modeled to avoid daily flicker.
-- **v2.2.6c** ⏳ after 2.2.6b — Per-pane scroll-position persistence.
-  Extend `layoutState` with per-pane `visibleRangeStart`/`visibleRangeEnd`;
-  capture from ChartContainer's existing visible-range subscription;
-  restore on boot via `setVisibleRange`. Defensive: if persisted range
-  falls outside the loaded dataset, fall back to fit-content rather
-  than crashing the chart restore.
+- **v2.2.6c** ❌ attempted, reverted May 2026 — Per-pane scroll-
+  position persistence. Implementation worked at the gates level
+  but the user-visible behavior wasn't worth the code surface:
+  on reload the chart didn't always land on the same scroll
+  position (race between the visible-range subscription's
+  immediate-fire emission and the restore step), and a follow-up
+  fix swapping `scrollToRealTime()` for `scrollToPosition(0)` to
+  preserve the right cushion was reverted by the user with
+  "It was fine before." Conclusion: scroll persistence isn't the
+  small polish item we thought; the existing fit-to-data behavior
+  on reload is acceptable. Re-evaluate if friend-test feedback
+  flags it as missing.
 - **v2.3** ⏳ after v2.2.5 — Battle context UI + resumable attempts.
   Meaty phase, possibly larger than v2.2.5. Includes:
     - Countdown timer in the trade view ("Time Remaining 00:54:51")
@@ -1237,8 +1243,8 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   once real usage surfaces friction. Cannot be pre-planned; informed
   by actual use.
 
-Phases v2.1–v2.2.6b are complete. v2.2.6c is shipping next, then
-v2.3 / v2.4 / v2.5.
+Phases v2.1–v2.2.6b are complete. v2.2.6c was attempted then reverted
+(see entry above). v2.3 ships next, then v2.4 / v2.5.
 
 ### Decisions baked into v2.0 (and the why)
 
