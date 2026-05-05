@@ -1172,11 +1172,27 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
       submitToServer → SessionEndedOverlay with full battle summary +
       back-to-battle href that respects `${battleSource}-${battleId}`
       prefix; submitOrder blocked when session.status === "ended".
-- **v2.2.6** ⏳ next — Workspace polish leftover from 5β scope:
-  closed-market overlay per pane (D4) when an instrument's session
-  is closed; position-count badges per pane (U2); per-pane scroll
-  position persistence (extend `layoutState` to include visible-range
-  timestamps; restore on boot). Light gate format.
+- **v2.2.6a** ✅ shipped May 2026 — Per-pane position-count badges (U2).
+  Small numeric pill in each pane's top-left chrome, adjacent to the
+  instrument selector, showing the count of open positions for that
+  pane's instrument. Hidden at zero with opacity transition for
+  0↔1+ fade. Active vs. inactive pane styling differentiates so the
+  focused pane is still visually distinct. Multi-pane same-instrument
+  duplicates show the same count in each (correct semantic — same
+  underlying positions, two views).
+- **v2.2.6b** ⏳ next — Closed-market overlay per pane (D4). When an
+  instrument's session is closed (forex weekend, equity overnight gap),
+  render a translucent "Market Closed" overlay over that pane's chart
+  area. Master-clock-based fade: overlay clears when
+  `masterClock.currentBarTime` crosses the next-open timestamp.
+  Defensive fallback: instruments without session-hours metadata don't
+  show the overlay (under-show beats incorrectly showing).
+- **v2.2.6c** ⏳ after 2.2.6b — Per-pane scroll-position persistence.
+  Extend `layoutState` with per-pane `visibleRangeStart`/`visibleRangeEnd`;
+  capture from ChartContainer's existing visible-range subscription;
+  restore on boot via `setVisibleRange`. Defensive: if persisted range
+  falls outside the loaded dataset, fall back to fit-content rather
+  than crashing the chart restore.
 - **v2.3** ⏳ after v2.2.5 — Battle context UI + resumable attempts.
   Meaty phase, possibly larger than v2.2.5. Includes:
     - Countdown timer in the trade view ("Time Remaining 00:54:51")
@@ -1209,8 +1225,8 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   once real usage surfaces friction. Cannot be pre-planned; informed
   by actual use.
 
-Phases v2.1–v2.2.5 are complete. v2.2.6 is shipping next (workspace
-polish leftover from the 5β scope), then v2.3 / v2.4 / v2.5.
+Phases v2.1–v2.2.6a are complete. v2.2.6b is shipping next, then v2.2.6c,
+then v2.3 / v2.4 / v2.5.
 
 ### Decisions baked into v2.0 (and the why)
 

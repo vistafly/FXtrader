@@ -8,6 +8,7 @@ import { ChartContainer } from "@/components/chart/ChartContainer";
 import { ErrorBoundary } from "@/components/ErrorFallback";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { useOrderStore } from "@/stores/orderStore";
 import { useReplayStore } from "@/stores/replayStore";
 
 import { PaneInstrumentSelector } from "./PaneInstrumentSelector";
@@ -48,6 +49,12 @@ export function ChartPane({
     (s) => s.paneIsAtLatest[paneIndex] ?? true,
   );
   const isActive = activePaneIndex === paneIndex;
+
+  // v2.2.6a: per-pane open-position count. Zustand selector returns a primitive
+  // number so re-renders are scoped to count changes only.
+  const positionCount = useOrderStore(
+    (s) => s.openPositions.filter((p) => p.instrument === symbol).length,
+  );
 
   // Auto-fade timeframe selector on idle. Visible by default; resets on
   // mouse move within the pane. Matches the legacy global selector's
@@ -102,8 +109,29 @@ export function ChartPane({
         className,
       )}
     >
-      <div className="absolute left-2 top-2 z-10">
+      <div className="absolute left-2 top-2 z-10 flex items-center gap-1.5">
         <PaneInstrumentSelector paneIndex={paneIndex} isActive={isActive} />
+        {/* v2.2.6a: position-count badge. Hidden at zero; subtle fade-in
+            on 0→1+ via opacity transition. Sits adjacent to the
+            instrument selector so the user can see at a glance which
+            pane carries which positions in a multi-pane workspace. */}
+        <div
+          className={cn(
+            "pointer-events-none flex h-[18px] min-w-[18px] items-center justify-center rounded-full border px-1 font-mono text-[10px] font-semibold tabular-nums transition-opacity duration-200",
+            positionCount > 0 ? "opacity-100" : "opacity-0",
+            isActive
+              ? "border-primary/50 bg-primary/15 text-primary"
+              : "border-border/50 bg-background/80 text-muted-foreground",
+          )}
+          aria-label={
+            positionCount > 0
+              ? `${positionCount} open position${positionCount === 1 ? "" : "s"} on ${symbol}`
+              : undefined
+          }
+          aria-hidden={positionCount === 0}
+        >
+          {positionCount}
+        </div>
       </div>
       <ErrorBoundary
         label={`Chart ${symbol}`}
