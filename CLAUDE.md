@@ -1211,25 +1211,78 @@ Phase numbering follows v1's convention but uses `v2.N` to distinguish.
   small polish item we thought; the existing fit-to-data behavior
   on reload is acceptable. Re-evaluate if friend-test feedback
   flags it as missing.
-- **v2.3** ⏳ after v2.2.5 — Battle context UI + resumable attempts.
-  Meaty phase, possibly larger than v2.2.5. Includes:
-    - Countdown timer in the trade view ("Time Remaining 00:54:51")
-    - "Ready? / Battle starts now!" intro transition
-      (see `references/fxreplay-battle-ready.png` for visual)
-    - Live leaderboard panel (realtime updates as attempts complete)
-    - Participants list (5/10) with online/offline status
-    - "Go to" navigation between battle elements
-    - One attempt per (user, multiplayer battle)
-    - Server-side resumable in-flight state — the "Exit session" button
-      must NOT finalize the attempt; only liquidation, profit-target
-      hit, or an explicit "Submit & Exit" action finalize. Plain Exit
-      returns to dashboard with attempt resumable from the same
-      bar/balance/positions/orders state.
-    - Watch-on-after-liquidation mode (read-only chart/positions view)
-    - Rules display inside the trade panel during multiplayer play
-  Reference visual: `references/fxreplay-battle-active.png`.
-  Sync strategy, leaderboard-refresh cadence, and liquidation criteria
-  decisions to be made in the v2.3 plan (multiple D-decisions expected).
+- **v2.3** ⏳ shipping — Battle context UI + resumable attempts. Plan
+  locked May 2026 with 9 sub-deliverables and 9 D-decisions. Ships in
+  six commits per the v2.2.6 sub-version pattern. Property-based replay
+  testing is a first-class deliverable (per the user's direction:
+  "the bug class it prevents — silent state drift — is the worst-debug
+  bug class").
+
+  **D-decisions (locked):**
+    - **D1 event log architecture** — client appends typed events to
+      Convex `attemptEvents`; resume = fetch + replay through pure
+      reducer. Folds v2.4 spectator + future replay-log anti-cheat
+      into v2.3's effort budget.
+    - **D2 single-attempt enforcement: hard block** — server rejects
+      duplicate `(userId, battleId, status="in-flight")`; UI shows
+      "Resume" not "Start." "Abandon attempt" requires typing the
+      battle name to confirm (not a checkbox-style modal).
+    - **D3 liquidation: server-verified, log-only** — server
+      independently re-checks drawdown on each event; mismatches go
+      to a dedicated `attemptDiscrepancies` Convex table with
+      `{ attemptId, eventSeq, clientReportedDQ, serverComputedDQ,
+      ruleBreached, timestamp }`. Audit substrate for future
+      anti-cheat work; does NOT block the attempt at v2.3.
+    - **D4 leaderboard sync: Convex live query.**
+    - **D6 online/offline: implicit last-write** (any event in last
+      30s = online). Bar-tick events at 60s replay-time give
+      heartbeat. Friend-test verification needed: a paused chart
+      with no actions for 2+ minutes will read as offline.
+    - **D7 countdown source: replay-time anchored** —
+      `(firstBarTime + duration*60) - currentBarTime`. **Keeps
+      advancing in watch-on-after-liquidation mode** (the battle
+      window is global, watch-mode is within it).
+    - **D8 "Ready?" intro: first-attempt only** — detect via
+      absence of `start` event in the attempt's event log.
+    - **D9 watch-on-after-liquidation: full read-only** — chart
+      scrubbable, replay controls (play/pause/scrub/speed) all
+      work, existing positions still mark-to-market with bar
+      advance, all mutating actions disabled.
+
+  **Three concerns flagged before implementation:**
+
+  1. **Bar-tick sampling spec.** Bar-tick events fire every 60s of
+     replay time as heartbeat + resync markers. Resume seek
+     granularity uses `currentBarTime` (the master clock state),
+     not the last bar-tick — bar-tick is a sampling pattern, not a
+     resume anchor. The 60s sampling rate is independent of the
+     30s online threshold (D6); they're distinct concerns.
+  2. **Exit-button label disambiguation.** Two buttons with "Exit"
+     in the name = UX accident. Locked labels:
+        - "**Exit**" — non-destructive; pauses + returns to dashboard
+          with attempt resumable
+        - "**Submit Final**" — destructive; locks the attempt result,
+          removes from in-flight, finalizes the leaderboard row
+     The destructive vs non-destructive distinction is unambiguous at
+     a glance.
+  3. **Reducer must error on seq gaps, not silently skip.** If
+     events 1, 3 reach Convex but 2 fails, applying [1, 3] to the
+     reducer must throw `ReducerSeqGapError`, not silently produce
+     wrong state. Property-based tests include "events with
+     deliberate gap → reducer rejects." Surface "your attempt
+     couldn't be resumed due to a sync gap" loudly rather than
+     drifting silently.
+
+  **Order of work (locked, six commits):**
+    1. Schema + Convex mutations + event log + reducer + property tests
+    2. Trade-view rewire (Exit ≠ finalize, Submit Final, resume on boot)
+    3. Countdown + Ready intro
+    4. Leaderboard + participants (Convex live queries)
+    5. Watch-on-after-liquidation
+    6. Rules display + Go-to navigation polish
+
+  Estimated total: ~8 days. Security-boundary phase, full new gate
+  format. Reference visual: `references/fxreplay-battle-active.png`.
 - **v2.4** ⏳ after v2.3 — Spectator mode. While a multiplayer battle
   is active, any participant or invited spectator can open a "watch"
   view of another player's chart, positions, and equity in

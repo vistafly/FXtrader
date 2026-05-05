@@ -86,6 +86,25 @@ export default defineSchema({
     disqualificationReason: v.optional(v.string()),
     completedAt: v.number(),
     submittedAt: v.number(),
+    // v2.3: lifecycle status. "in-flight" rows are resumable attempts
+    // with provisional `finalBalance`/`pnlPct`/`trades`/`winRate`
+    // (overwritten when the user explicitly Submits Final). Rows
+    // without `status` are pre-v2.3 attempts and treated as
+    // "completed" by code that reads this field.
+    status: v.optional(
+      v.union(
+        v.literal("in-flight"),
+        v.literal("completed"),
+        v.literal("abandoned"),
+      ),
+    ),
+    /** v2.3: monotonic sequence number of the last appended event for
+     *  this attempt. Reducer enforces contiguous +1 increments on
+     *  resume; gap → ReducerSeqGapError. */
+    lastEventSeq: v.optional(v.number()),
+    /** v2.3: server-side wall-clock time the attempt was first
+     *  started. Distinct from `submittedAt` (final submission time). */
+    startedAt: v.optional(v.number()),
   })
     .index("by_battleId", ["battleId"])
     .index("by_battle_user", ["battleId", "userId"])
@@ -93,5 +112,46 @@ export default defineSchema({
     // v2.2: composite index for snapshot-leaderboard queries that
     // sort attempts within a battle by completion time. Aggregation
     // to "best-per-user" happens client-side in lib/battles/leaderboard.ts.
-    .index("by_battle_completed", ["battleId", "completedAt"]),
+    .index("by_battle_completed", ["battleId", "completedAt"])
+    // v2.3: index for D2 single-attempt enforcement — looking up
+    // the user's in-flight attempt for a given battle. Status is
+    // included so the lookup matches only "in-flight" rows.
+    .index("by_battle_user_status", ["battleId", "userId", "status"]),
+
+  // v2.3: typed event log per attempt. Client appends events as the
+  // user trades; resume = fetch all events for the attempt + replay
+  // through the pure AttemptReducer in src/lib/events. Spectator
+  // (v2.4) and replay-log anti-cheat (BACKLOG) read from the same
+  // table — building once, reusing thrice.
+  //
+  // Seq is enforced contiguous-+1-per-attempt by the appendEvent
+  // mutation. The reducer throws ReducerSeqGapError on missing seq
+  // numbers rather than silently drifting state.
+  attemptEvents: defineTable({
+    attemptId: v.id("battleAttempts"),
+    seq: v.number(),
+    type: v.string(),
+    payload: v.any(),
+    /** UTC unix-second replay time the event represents. Distinct
+     *  from `_creationTime` which is wall-clock when the event landed
+     *  on the server. */
+    time: v.number(),
+  })
+    .index("by_attempt_seq", ["attemptId", "seq"])
+    .index("by_attempt", ["attemptId"]),
+
+  // v2.3 (D3 refinement): server-side liquidation re-check log. When
+  // the server independently evaluates drawdown rules on an event and
+  // its result disagrees with the client's reported state, a row
+  // lands here. Audit substrate for the future anti-cheat phase; at
+  // v2.3 this is log-only — does NOT block the attempt.
+  attemptDiscrepancies: defineTable({
+    attemptId: v.id("battleAttempts"),
+    eventSeq: v.number(),
+    clientReportedDQ: v.boolean(),
+    serverComputedDQ: v.boolean(),
+    ruleBreached: v.optional(v.string()),
+    timestamp: v.number(),
+  })
+    .index("by_attempt", ["attemptId"]),
 });
