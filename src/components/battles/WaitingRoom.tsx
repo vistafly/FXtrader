@@ -90,10 +90,26 @@ export function WaitingRoom(props: Props) {
   const members = useQuery(api.lobby.listLobbyMembers, { battleId });
   const joinLobbyMut = useMutation(api.lobby.joinLobby);
   const leaveLobbyMut = useMutation(api.lobby.leaveLobby);
+  // v2.3 sub-phase 3: detect whether the current user has already
+  // submitted (or had liquidated) an attempt for this battle. If so,
+  // the Start CTA is replaced with a "View leaderboard" affordance —
+  // user has spent their one shot, can't start a fresh attempt.
+  const myAttempt = useQuery(api.attempts.getMyAttempt, { battleId });
+  const hasCompletedAttempt =
+    myAttempt?.status === "completed" || myAttempt?.disqualified === true;
 
   // Join the lobby on mount; leave on unmount. Refresh joinedAt
   // every 60s while open so the stale-prune on the server doesn't
   // drop us if we sit on the page for a while.
+  //
+  // Lobby-flash guard: React StrictMode (dev) and HMR can unmount
+  // then remount this component near-immediately. A naive
+  // unmount→leaveLobby followed by remount→joinLobby would DELETE
+  // and INSERT the lobby row, giving it a new _id, which makes the
+  // `key={m._id}`-keyed ParticipantBubble unmount and remount —
+  // that's the flash. Defer the leave by 1.5s; if a remount has
+  // happened in that window, cancel the leave. Friends-only delay
+  // for genuine departures is a fine trade-off.
   useEffect(() => {
     if (!myProfile) return;
     const displayName = myProfile.displayName || "player";
@@ -101,9 +117,23 @@ export function WaitingRoom(props: Props) {
     const refresh = setInterval(() => {
       void joinLobbyMut({ battleId, displayName });
     }, 60_000);
+    // Cancel any pending leave from a prior cleanup — we're back.
+    if (typeof window !== "undefined") {
+      const w = window as unknown as { __fxLobbyLeaveTimer?: number };
+      if (w.__fxLobbyLeaveTimer !== undefined) {
+        clearTimeout(w.__fxLobbyLeaveTimer);
+        w.__fxLobbyLeaveTimer = undefined;
+      }
+    }
     return () => {
       clearInterval(refresh);
-      void leaveLobbyMut({ battleId });
+      if (typeof window !== "undefined") {
+        const w = window as unknown as { __fxLobbyLeaveTimer?: number };
+        w.__fxLobbyLeaveTimer = window.setTimeout(() => {
+          w.__fxLobbyLeaveTimer = undefined;
+          void leaveLobbyMut({ battleId });
+        }, 1500) as unknown as number;
+      }
     };
   }, [battleId, joinLobbyMut, leaveLobbyMut, myProfile]);
 
@@ -125,9 +155,14 @@ export function WaitingRoom(props: Props) {
     setStartingMatch(true);
     try {
       await onStartMatch();
+      // Host launches directly; don't wait for the live-query
+      // broadcast roundtrip on their own client. Joiners' effect
+      // still picks up startedAt via Convex live query and handles
+      // their own launch. Skipping the wait here removes the brief
+      // lobby flash between click and navigation.
+      onLaunch();
     } catch (err) {
       toast.error(`Could not start match: ${(err as Error).message}`);
-    } finally {
       setStartingMatch(false);
     }
   };
@@ -291,6 +326,23 @@ export function WaitingRoom(props: Props) {
                 Loading your trade view…
               </p>
             </div>
+          ) : hasCompletedAttempt ? (
+            // v2.3 sub-phase 3: user already submitted (or got DQ'd
+            // on) this battle — one attempt per (user, battle), so
+            // they can't start another. Show a subdued affordance
+            // confirming their attempt is recorded.
+            <div className="flex flex-col items-center gap-2 text-center">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 px-4 py-2 font-mono text-xs uppercase tracking-wider text-muted-foreground">
+                <Crown className="h-3.5 w-3.5" />
+                {myAttempt?.disqualified
+                  ? "Attempt disqualified"
+                  : "Attempt submitted"}
+              </div>
+              <p className="max-w-md text-xs text-muted-foreground">
+                You&apos;ve completed this battle. Check the leaderboard to
+                see how you stack up.
+              </p>
+            </div>
           ) : isCreator ? (
             <Button
               size="lg"
@@ -317,6 +369,25 @@ export function WaitingRoom(props: Props) {
           )}
         </div>
       </div>
+
+      {/* Transition cover: once the user has clicked Start match
+          (or the broadcast has fired), drop an opaque overlay over
+          the lobby content so the page doesn't flash the lobby
+          UI between click and navigation. The trade page picks up
+          the Ready intro from here. */}
+      {(startingMatch || launching || matchStarted) && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-background/95 backdrop-blur-md">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="font-mono text-[11px] uppercase tracking-[0.4em] text-primary/80">
+              Match starting
+            </div>
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Loading your trade view…
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

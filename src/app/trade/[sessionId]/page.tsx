@@ -1,6 +1,7 @@
 "use client";
 
-import { useConvex, useMutation } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -16,7 +17,9 @@ import { ClosedPositionsTable } from "@/components/trade/ClosedPositionsTable";
 import { LayoutSelector } from "@/components/trade/LayoutSelector";
 import { OpenPositionsTable } from "@/components/trade/OpenPositionsTable";
 import { PlaceOrderDialog } from "@/components/trade/PlaceOrderDialog";
+import { CountdownTimer } from "@/components/trade/CountdownTimer";
 import { QuickBuySellPanel } from "@/components/trade/QuickBuySellPanel";
+import { ReadyIntroOverlay } from "@/components/trade/ReadyIntroOverlay";
 import { RulesChips } from "@/components/trade/RulesChips";
 import { SubmitFinalDialog } from "@/components/trade/SubmitFinalDialog";
 import {
@@ -179,6 +182,20 @@ export default function TradeSessionPage({
   };
 
   const session = useSessionStore((s) => s.activeSession);
+  // v2.3 sub-phase 3: live battle reference for the countdown's
+  // duration source. activeBattle is set by startSession from the
+  // params; battleSnapshot is the persisted fallback for reload.
+  const activeBattle = useSessionStore((s) => s.activeBattle);
+  // v2.3 sub-phase 3 (revised): wall-clock countdown needs the
+  // server-side `startedAt` (set when the host clicks Start match)
+  // plus durationMinutes. Live useQuery so the countdown reacts
+  // when a creator starts the match while the joiner is on /trade.
+  const liveBattle = useQuery(
+    api.battles.getBattle,
+    session?.battleSource === "server" && session?.battleId
+      ? { battleId: session.battleId as Id<"battles"> }
+      : "skip",
+  );
   // v2.2.5α: the focused pane's instrument drives order routing + the
   // QuickBuySellPanel symbol prop. Falls back to session.instrument before
   // the layoutStore is initialized (boot has not completed yet).
@@ -191,6 +208,11 @@ export default function TradeSessionPage({
   const appendEventMut = useMutation(api.attempts.appendEvent);
   const markCompletedMut = useMutation(api.attempts.markCompleted);
   const convex = useConvex();
+
+  // v2.3 sub-phase 3: Ready intro state declared early so the boot
+  // useEffect (which sets it on empty-log first entry) doesn't
+  // access a not-yet-declared setter.
+  const [showReadyIntro, setShowReadyIntro] = useState(false);
 
   // Boot the session: load from Dexie, fetch bars (one or many), seed the
   // engines via MasterClock, hardcode-init the layout from instruments.
@@ -306,7 +328,40 @@ export default function TradeSessionPage({
         // overwrite orderStore + balance with the result. The Dexie
         // restoration above already painted the chart instantly; this
         // reconciles against the server's source of truth.
-        if (active.attemptId) {
+        //
+        // Skip the entire event-log path when the session is already
+        // ended — appendEvent would reject every queued event with
+        // "attempt-not-in-flight", spamming console errors. Ended
+        // sessions are read-only; the chart still renders for
+        // post-mortem viewing (D9 watch-mode).
+        if (active.attemptId && active.status !== "ended") {
+          // v2.3 sub-phase 3 (D8): read the fresh-attempt flag set by
+          // the battle page's onNewAttempt. ONLY a flag match shows
+          // the Ready intro — resumes / rejoins / cross-tab
+          // navigation never have this flag and skip the intro.
+          //
+          // Do NOT clear here. React StrictMode (dev) double-mounts
+          // this effect; clearing eagerly means the second mount
+          // sees an empty flag and the overlay never fires. The
+          // overlay's onDone callback clears it once the 3-2-1
+          // sequence has actually played.
+          let isFreshAttempt = false;
+          if (typeof window !== "undefined") {
+            const flag = sessionStorage.getItem("fx.freshAttempt");
+            if (flag === active.attemptId) {
+              isFreshAttempt = true;
+            }
+          }
+          // v2.3 sub-phase 3: show the Ready intro IMMEDIATELY when
+          // we know it's a fresh attempt — before any await. The
+          // overlay is full-screen z-100, so it covers the boot
+          // loading state (chart spinner, etc) and the user sees
+          // a continuous "click → 3-2-1 → trade UI" experience
+          // instead of a brief boot flash before the intro.
+          if (isFreshAttempt && !cancelled) {
+            setShowReadyIntro(true);
+          }
+
           try {
             const events = (await convex.query(api.attempts.listEvents, {
               attemptId: active.attemptId as Id<"battleAttempts">,
@@ -370,6 +425,7 @@ export default function TradeSessionPage({
                 rules: snap?.rules ?? {},
               });
             }
+
           } catch (e) {
             // Convex unavailable / auth issue — fall back to Dexie-only
             // mode. The user can still trade; events just won't sync
@@ -541,27 +597,50 @@ export default function TradeSessionPage({
       }
     }
 
-    // Continue with the existing endSession path (writes BattleAttempt,
-    // flips session.status to "ended", triggers SessionEndedOverlay).
+    // Continue with the existing endSession path (flips session.status
+    // to "ended", triggers SessionEndedOverlay, writes the closed
+    // BattleAttempt to Dexie for local-history viewing).
+    //
+    // v2.3: when session.attemptId is set, markCompleted above already
+    // finalized the server-side leaderboard row by patching the
+    // in-flight battleAttempts entry — calling submitAttempt as well
+    // would INSERT a second row (duplicate leaderboard entry) AND
+    // trip the 10s rate limiter. Skip the legacy submitToServer path
+    // for v2.3 server attempts; keep it for local-only / non-attempt
+    // sessions where markCompleted didn't run.
     await useSessionStore.getState().endSession({
-      submitToServer: async (data) => {
-        await submitServerAttempt({
-          battleId: data.battleId as Id<"battles">,
-          finalBalance: data.finalBalance,
-          pnlPct: data.pnlPct,
-          trades: data.trades,
-          winRate: data.winRate,
-          disqualified: data.disqualified,
-          disqualificationReason: data.disqualificationReason,
-          completedAt: data.completedAt,
-        });
-      },
+      submitToServer: session.attemptId
+        ? undefined
+        : async (data) => {
+            await submitServerAttempt({
+              battleId: data.battleId as Id<"battles">,
+              finalBalance: data.finalBalance,
+              pnlPct: data.pnlPct,
+              trades: data.trades,
+              winRate: data.winRate,
+              disqualified: data.disqualified,
+              disqualificationReason: data.disqualificationReason,
+              completedAt: data.completedAt,
+            });
+          },
     });
     toast.success("Attempt submitted.");
     router.push("/dashboard");
   };
 
   const [submitFinalOpen, setSubmitFinalOpen] = useState(false);
+  // Auto-fire Submit Final when the replay-clock countdown reaches
+  // zero. Per D7 the countdown is replay-time anchored, so this
+  // fires exactly when the master clock has played through the full
+  // battle window. Per D9 it keeps advancing in
+  // watch-on-after-liquidation mode — the auto-fire is debounced
+  // by session.status === "ended" (already-finalized attempts skip).
+  const onCountdownExpire = () => {
+    const session = useSessionStore.getState().activeSession;
+    if (!session || session.status === "ended") return;
+    if (!session.attemptId) return; // single-player / local — no submit-final concept
+    void onSubmitFinal();
+  };
 
   const loading = bootedFor !== `${sessionId}/${SOURCE_RESOLUTION}` && !bootError;
 
@@ -598,12 +677,47 @@ export default function TradeSessionPage({
             }
           />
         </div>
-        {/* v2.2.5α: layout selector — only meaningful for multi-asset
-            sessions. Single-instrument sessions hide it since 1-pane is
-            the only valid choice anyway. */}
-        {session?.instruments && session.instruments.length > 1 && (
-          <LayoutSelector />
-        )}
+        <div className="flex items-center gap-2">
+          {/* v2.3 sub-phase 3 (D7): replay-clock countdown for
+              server-battle attempts. Anchored to startBarTime +
+              durationMinutes; freezes when the master clock is
+              paused. Auto-fires Submit Final at zero.
+              Boot-gate: only mount when boot has completed for THIS
+              sessionId AND activeSession.id matches. Otherwise the
+              CountdownTimer can briefly render with stale session
+              data from a previous attempt — if that prior session's
+              currentBarTime was past endsAtSec, it would fire onExpire
+              against the new session, marking it ended before the
+              user has done anything. */}
+          {!loading &&
+            session?.id === sessionId &&
+            session?.attemptId &&
+            (() => {
+              const snap = session.battleSnapshot as
+                | { durationMinutes?: number }
+                | undefined;
+              const duration =
+                liveBattle?.durationMinutes ??
+                activeBattle?.durationMinutes ??
+                snap?.durationMinutes;
+              const startAnchorMs =
+                liveBattle?.startedAt ?? session.createdAt * 1000;
+              if (!duration || !startAnchorMs) return null;
+              return (
+                <CountdownTimer
+                  endsAtMs={startAnchorMs + duration * 60 * 1000}
+                  onExpire={onCountdownExpire}
+                  disableExpire={session.status === "ended"}
+                />
+              );
+            })()}
+          {/* v2.2.5α: layout selector — only meaningful for multi-asset
+              sessions. Single-instrument sessions hide it since 1-pane is
+              the only valid choice anyway. */}
+          {session?.instruments && session.instruments.length > 1 && (
+            <LayoutSelector />
+          )}
+        </div>
       </header>
 
       <div className="relative flex flex-1 overflow-hidden">
@@ -711,6 +825,33 @@ export default function TradeSessionPage({
         onConfirm={onSubmitFinal}
       />
 
+      {/* v2.3 sub-phase 3 (D8): "Ready?" intro on first entry only.
+          showReadyIntro is set in the boot effect when the
+          fx.freshAttempt sessionStorage flag matches this attempt.
+          Resumes / rejoins leave it false and the overlay never
+          mounts. Boot-gate matches CountdownTimer's so the overlay
+          mounts after the chart is ready and not over a stale
+          session. */}
+      {/* v2.3 sub-phase 3: Ready intro — shows during boot AND after.
+          The overlay is z-100, so it covers the boot loading state
+          and provides a continuous transition from WaitingRoom →
+          intro → trade UI. */}
+      {showReadyIntro && session?.id === sessionId && (
+        <ReadyIntroOverlay
+          battleName={session?.name}
+          onDone={() => {
+            setShowReadyIntro(false);
+            // Clear the fresh-attempt flag once the intro has
+            // actually played, so subsequent reloads of this
+            // attempt skip the intro. Reloading WITHIN the 3.6s
+            // window will re-show the intro — acceptable.
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem("fx.freshAttempt");
+            }
+          }}
+        />
+      )}
+
       {showEndedOverlay && (
         <SessionEndedOverlay
           reason={endedReason?.reason}
@@ -736,14 +877,6 @@ function SessionEndedOverlay({
   session: Session | null;
 }) {
   const wasLiquidated = !!reason;
-  // /battles/[battleId] expects a prefix-dispatched id (`local-<id>` or
-  // `server-<id>`) per inviteCode.ts. Derive the prefix from the session's
-  // battleSource. Falls back to /dashboard when there's no battle context.
-  const battleHref =
-    session?.battleId
-      ? `/battles/${session.battleSource ?? "local"}-${session.battleId}`
-      : "/dashboard";
-
   // Pull this session's closed trades to compute the in-depth summary.
   // Filter via useMemo — selecting the array directly returns a stable
   // reference (Zustand only swaps `closedTrades` when it actually changes),
@@ -869,18 +1002,24 @@ function SessionEndedOverlay({
         )}
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-          <a
-            href={battleHref}
+          {/* v2.3 sub-phase 3: route to /battles instead of the
+              specific battle page. The attempt is finalized — no
+              "back into the battle" affordance for a completed
+              attempt (avoids duplicate-submission). User can still
+              click the battle from /battles to view the leaderboard
+              but won't land on a Start CTA. */}
+          <Link
+            href="/battles"
             className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
           >
-            Back to battle
-          </a>
-          <a
+            All battles
+          </Link>
+          <Link
             href="/dashboard"
             className="inline-flex items-center rounded-md px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
           >
             Dashboard
-          </a>
+          </Link>
         </div>
       </div>
     </div>

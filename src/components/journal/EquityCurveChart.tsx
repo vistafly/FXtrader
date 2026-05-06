@@ -43,8 +43,8 @@ export function EquityCurveChart({ trades }: { trades: Trade[] }) {
       <h3 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
         Equity curve
       </h3>
-      <div className="h-[240px]">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-[240px] min-w-0">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <LineChart data={data}>
             <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" opacity={0.3} />
             <XAxis

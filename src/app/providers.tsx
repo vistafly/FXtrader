@@ -41,6 +41,32 @@ const convex = new ConvexReactClient(
  *   in the same frame the bar paints, not a frame late.
  */
 export function Providers({ children }: { children: React.ReactNode }) {
+  // v2.3 sub-phase 3: suppress recharts' "width(-1) and height(-1)"
+  // first-paint warning. Setting minWidth/minHeight props on
+  // ResponsiveContainer doesn't actually silence it because recharts
+  // logs the warning during its initial measurement pass before
+  // applying those props. The chart paints correctly afterward — it's
+  // pure console noise. Filter at the console.warn layer in dev only;
+  // production builds don't emit the warning at all.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const first = args[0];
+      if (
+        typeof first === "string" &&
+        first.includes("width(-1) and height(-1)") &&
+        first.includes("chart should be greater than 0")
+      ) {
+        return;
+      }
+      originalWarn(...args);
+    };
+    return () => {
+      console.warn = originalWarn;
+    };
+  }, []);
+
   useEffect(() => {
     /**
      * Per-engine subscriptions. Map stores symbol → unsubscribe so we can

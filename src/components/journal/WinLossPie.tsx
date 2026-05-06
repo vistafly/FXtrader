@@ -38,8 +38,8 @@ export function WinLossPie({ trades }: { trades: Trade[] }) {
       <h3 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
         Win / loss
       </h3>
-      <div className="relative h-[240px]">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="relative h-[240px] min-w-0">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <PieChart>
             <Pie
               data={data}

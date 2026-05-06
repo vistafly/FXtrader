@@ -312,3 +312,38 @@ export const getActiveAttempt = query({
       .first();
   },
 });
+
+/**
+ * v2.3 sub-phase 3: find this user's MOST RECENT attempt for a battle
+ * regardless of status. Used by the WaitingRoom to detect completed
+ * attempts and disable the "Start match" CTA — preventing duplicate
+ * submissions to the same battle. Returns null if the user has no
+ * attempts (in-flight or otherwise) for this battle.
+ *
+ * Returned-row precedence (highest first):
+ *   in-flight > completed > abandoned
+ * So if a user has an in-flight AND a prior abandoned, we return the
+ * in-flight (matches getActiveAttempt's intent for a single source).
+ */
+export const getMyAttempt = query({
+  args: { battleId: v.id("battles") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const all = await ctx.db
+      .query("battleAttempts")
+      .withIndex("by_battle_user", (q) =>
+        q.eq("battleId", args.battleId).eq("userId", userId),
+      )
+      .collect();
+    if (all.length === 0) return null;
+    // Prefer in-flight, then most recent completed, then abandoned.
+    const inFlight = all.find((a) => a.status === "in-flight");
+    if (inFlight) return inFlight;
+    const completed = all
+      .filter((a) => a.status === "completed")
+      .sort((a, b) => b.submittedAt - a.submittedAt)[0];
+    if (completed) return completed;
+    return all[0];
+  },
+});

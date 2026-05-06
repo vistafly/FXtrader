@@ -256,6 +256,17 @@ export default function BattleDetailPage({
         const updated = { ...session, attemptId };
         await sessionRepository.put(updated);
         useSessionStore.setState({ activeSession: updated });
+
+        // v2.3 sub-phase 3 (D8 refinement): mark this attempt as
+        // freshly created so the trade page shows the Ready intro
+        // overlay on first entry. The trade page reads + clears
+        // this flag — subsequent reloads (resume, rejoin, watch-
+        // mode) won't see it and the intro is skipped. Per-tab
+        // sessionStorage scopes correctly to a single navigation
+        // and survives the router.push.
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("fx.freshAttempt", attemptId);
+        }
       }
 
       router.push(`/trade/${session.id}`);
