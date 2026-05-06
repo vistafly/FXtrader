@@ -208,15 +208,13 @@ export default function BattleDetailPage({
       // toast instead of crashing.
       let attemptId: string | undefined;
       if (view.source === "server") {
-        // Display-name snapshot for the leaderboard. The server-side
-        // serverBattle is the source of truth here (the local-shaped
-        // Battle has no createdBySnapshot field). Production UI reads
-        // the live displayName from convex/profiles.ts at leaderboard
-        // render; this is the fallback rendered when the live join
-        // fails (renamed user, etc).
-        const displayName =
-          (serverBattle as { createdBySnapshot?: string } | null | undefined)
-            ?.createdBySnapshot ?? "player";
+        // Display-name snapshot for the leaderboard — must be the
+        // CURRENT user's name, not the battle creator's. Earlier
+        // version mistakenly used serverBattle.createdBySnapshot
+        // here, which made every joiner's attempt show as the
+        // creator's name (collapsing the leaderboard to dupes when
+        // multiple users joined).
+        const displayName = myProfile?.displayName ?? "player";
         try {
           attemptId = (await startAttemptMut({
             battleId: parsed.id as Id<"battles">,
@@ -224,12 +222,20 @@ export default function BattleDetailPage({
             startingBalance: view.battle.startingBalance,
           })) as unknown as string;
         } catch (err) {
-          const e = err as { data?: { kind?: string }; message?: string };
+          const e = err as {
+            data?: { kind?: string; attemptId?: string };
+            message?: string;
+          };
           if (e?.data?.kind === "attempt-already-in-flight") {
-            // Defensive — should be caught by the Resume button gate
-            // upstream, but the query may be stale. Surface and bail.
-            toast.error("Resume your existing attempt or abandon it first.");
+            // Race: the server says we have an in-flight attempt but
+            // our local activeAttempt query hadn't returned yet (or
+            // the WaitingRoom Start path was clicked before the
+            // activeAttempt subscription loaded). Auto-route to the
+            // resume flow instead of dumping the user with a toast.
+            // The server payload includes the existing attemptId so
+            // we don't need a roundtrip to find it.
             setStarting(false);
+            void onResume();
             return;
           }
           throw err;
@@ -441,6 +447,13 @@ export default function BattleDetailPage({
           rules={view.battle.rules}
           startedAt={startedAt}
           isCreator={isCreator}
+          activeAttemptId={
+            activeAttempt === undefined
+              ? undefined // still loading
+              : activeAttempt
+                ? (activeAttempt._id as string)
+                : null
+          }
           onLaunch={onLaunch}
           onStartMatch={onStartMatch}
           copyInviteLink={copyInviteLink}

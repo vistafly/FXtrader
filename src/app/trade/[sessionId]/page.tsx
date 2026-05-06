@@ -15,7 +15,9 @@ import { AccountSidebar } from "@/components/trade/AccountSidebar";
 import { ChartGrid } from "@/components/trade/ChartGrid";
 import { ClosedPositionsTable } from "@/components/trade/ClosedPositionsTable";
 import { LayoutSelector } from "@/components/trade/LayoutSelector";
+import { LeaderboardPanel } from "@/components/trade/LeaderboardPanel";
 import { OpenPositionsTable } from "@/components/trade/OpenPositionsTable";
+import { RankIndicator } from "@/components/trade/RankIndicator";
 import { PlaceOrderDialog } from "@/components/trade/PlaceOrderDialog";
 import { CountdownTimer } from "@/components/trade/CountdownTimer";
 import { QuickBuySellPanel } from "@/components/trade/QuickBuySellPanel";
@@ -213,6 +215,14 @@ export default function TradeSessionPage({
   // useEffect (which sets it on empty-log first entry) doesn't
   // access a not-yet-declared setter.
   const [showReadyIntro, setShowReadyIntro] = useState(false);
+
+  // v2.3 sub-phase 4: current user's profile for the leaderboard's
+  // "highlight my row" treatment. Loads whenever there's a battleId;
+  // null for unauthed users (Convex query returns null then).
+  const myProfile = useQuery(
+    api.profiles.getMyProfile,
+    session?.battleId ? {} : "skip",
+  );
 
   // Boot the session: load from Dexie, fetch bars (one or many), seed the
   // engines via MasterClock, hardcode-init the layout from instruments.
@@ -480,6 +490,43 @@ export default function TradeSessionPage({
     return () => clearInterval(interval);
   }, [sessionId]);
 
+  // v2.3 sub-phase 4: live P&L heartbeat to Convex so other clients'
+  // leaderboard reflects this user's current balance in real time.
+  // 5s cadence — fast enough to feel "live" without burning writes.
+  // Skipped for ended sessions and non-server-attempt sessions.
+  // Sends trades count too (open + closed) so the leaderboard can
+  // split "In flight" (hasn't traded yet) from "Active" (currently
+  // trading, ranked by P&L).
+  const updateLivePnlMut = useMutation(api.attempts.updateLivePnl);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const active = useSessionStore.getState().activeSession;
+      if (!active || active.id !== sessionId) return;
+      if (active.status !== "active") return;
+      if (!active.attemptId) return;
+      const balance = useSessionStore.getState().balance;
+      const pnlPct =
+        active.startingBalance > 0
+          ? ((balance - active.startingBalance) / active.startingBalance) *
+            100
+          : 0;
+      // v2.3 sub-phase 4: `trades` reports CLOSED trades only —
+      // realized results. Open positions don't count: a user with
+      // an unrealized position hasn't "made a trade" in the sense
+      // of having a result yet, and stays in the "In flight"
+      // section until they close at least one position.
+      const orderState = useOrderStore.getState();
+      const trades = orderState.closedTrades.length;
+      void updateLivePnlMut({
+        attemptId: active.attemptId as Id<"battleAttempts">,
+        finalBalance: balance,
+        pnlPct,
+        trades,
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [sessionId, updateLivePnlMut]);
+
   // U3: when the user changes pane focus, close any open Place Order dialog.
   // The dialog defaults its symbol to the active pane's instrument; closing
   // it on focus change prevents an accidental submit against the now-stale
@@ -676,6 +723,17 @@ export default function TradeSessionPage({
                 | undefined)?.rules
             }
           />
+          {/* v2.3 sub-phase 4: live-rank pill — glanceable position
+              among actively-trading participants. Renders nothing
+              when the user hasn't traded yet, has no battle context,
+              or there aren't enough actives for ranking to be
+              meaningful. */}
+          {session?.battleId && (
+            <RankIndicator
+              battleId={session.battleId as Id<"battles">}
+              myUserId={myProfile?.userId}
+            />
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* v2.3 sub-phase 3 (D7): replay-clock countdown for
@@ -785,6 +843,19 @@ export default function TradeSessionPage({
 
           <ScrubberBar className="shrink-0" />
         </section>
+
+        {/* v2.3 sub-phase 4: live leaderboard drawer for server-battle
+            attempts. Anchored to the left edge inside the trade
+            section; collapsible via its own edge tab. Mounted
+            whenever the session has a battleId — Convex will return
+            an empty list for local-only or unknown battle ids, so
+            the panel just shows "No attempts yet" gracefully. */}
+        {session?.battleId && (
+          <LeaderboardPanel
+            battleId={session.battleId as Id<"battles">}
+            myUserId={myProfile?.userId}
+          />
+        )}
 
         {sidebarOpen && (
           <AccountSidebar

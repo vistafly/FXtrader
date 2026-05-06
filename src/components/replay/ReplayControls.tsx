@@ -1,6 +1,6 @@
 "use client";
 
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Pause, Play, SkipForward } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -55,7 +55,6 @@ export function ReplayControls({ timeframeMinutes, className }: Props) {
   // pick a step finer than the chart's timeframe.
   const stepCount = Math.max(1, Math.floor(stepMinutes / Math.max(1, timeframeMinutes)));
 
-  const onStepBack = () => step("back", stepCount);
   const onStepForward = () => step("forward", stepCount);
 
   const currentStepLabel =
@@ -64,15 +63,10 @@ export function ReplayControls({ timeframeMinutes, className }: Props) {
   return (
     <div className={cn("flex items-center gap-3 py-1.5", className)}>
       <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onStepBack}
-          disabled={currentBarIndex <= 0}
-          aria-label={`Step back ${currentStepLabel}`}
-        >
-          <SkipBack className="h-4 w-4" />
-        </Button>
+        {/* v2.3 sub-phase 4: SkipBack removed — backwards bar
+            navigation is incompatible with multiplayer attempts
+            (would let users undo past trades / re-time decisions).
+            Only forward step + play remain. */}
         <Button
           size="icon"
           variant="default"

@@ -314,6 +314,43 @@ export const getActiveAttempt = query({
 });
 
 /**
+ * v2.3 sub-phase 4: live P&L update for in-flight attempts. Trade
+ * page calls this on a heartbeat interval (~5s) so other clients'
+ * leaderboard live queries reflect this user's current balance
+ * without waiting for submission. No-ops when the attempt isn't
+ * in-flight — we never overwrite finalized stats.
+ *
+ * Auth: caller must own the attempt. Same enforcement as
+ * appendEvent. Cheap mutation — just a patch — but let's not
+ * burn through Convex's free tier with malicious clients writing
+ * to other users' rows.
+ */
+export const updateLivePnl = mutation({
+  args: {
+    attemptId: v.id("battleAttempts"),
+    finalBalance: v.number(),
+    pnlPct: v.number(),
+    /** v2.3 sub-phase 4: total live trade count (open positions +
+     *  closed trades). Drives the leaderboard's "In flight"
+     *  (no trades yet) vs "Active / ranked" (has trades) split. */
+    trades: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return;
+    const attempt = await ctx.db.get(args.attemptId);
+    if (!attempt) return;
+    if (attempt.userId !== userId) return;
+    if (attempt.status !== "in-flight") return;
+    await ctx.db.patch(args.attemptId, {
+      finalBalance: args.finalBalance,
+      pnlPct: args.pnlPct,
+      trades: args.trades,
+    });
+  },
+});
+
+/**
  * v2.3 sub-phase 3: find this user's MOST RECENT attempt for a battle
  * regardless of status. Used by the WaitingRoom to detect completed
  * attempts and disable the "Start match" CTA — preventing duplicate

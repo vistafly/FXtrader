@@ -31,6 +31,18 @@ interface Props {
   /** True iff the current user is the creator. Drives the Start-match button. */
   isCreator: boolean;
   /**
+   * v2.3 sub-phase 4: tri-state for the broadcast-launch effect.
+   *   undefined → activeAttempt query is still loading; defer launch
+   *   null      → no in-flight attempt; launch will create one
+   *   string    → in-flight attempt id; launch will resume into it
+   *
+   * Without this gate the WaitingRoom can fire onLaunch before the
+   * parent's activeAttempt query resolves — onLaunch then falls
+   * into onNewAttempt instead of onResume, the server rejects with
+   * `attempt-already-in-flight`, and the user sees a noisy error.
+   */
+  activeAttemptId: string | null | undefined;
+  /**
    * Fired when the user (creator or joiner) should auto-launch into
    * trade. Caller is responsible for the actual startAttempt /
    * resumeAttempt flow + navigation.
@@ -77,6 +89,7 @@ export function WaitingRoom(props: Props) {
     rules,
     startedAt,
     isCreator,
+    activeAttemptId,
     onLaunch,
     onStartMatch,
     copyInviteLink,
@@ -141,13 +154,20 @@ export function WaitingRoom(props: Props) {
   // the auto-redirect effect fires onLaunch exactly once. Ref
   // guard prevents re-fires on subsequent re-renders while the
   // launch is in flight.
+  //
+  // v2.3 sub-phase 4: gate on activeAttemptId being RESOLVED (not
+  // undefined = still loading). Otherwise back-navigation to the
+  // battle page can fire onLaunch before the parent's
+  // activeAttempt query returns, causing onNewAttempt to run and
+  // the server to reject with `attempt-already-in-flight`.
   const launchedRef = useRef(false);
   useEffect(() => {
     if (launchedRef.current) return;
     if (!startedAt) return;
+    if (activeAttemptId === undefined) return; // loading; defer
     launchedRef.current = true;
     queueMicrotask(() => onLaunch());
-  }, [startedAt, onLaunch]);
+  }, [startedAt, onLaunch, activeAttemptId]);
 
   const [startingMatch, setStartingMatch] = useState(false);
   const onStartClick = async () => {
