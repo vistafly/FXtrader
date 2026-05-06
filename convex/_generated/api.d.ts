@@ -12,6 +12,7 @@ import type * as attempts from "../attempts.js";
 import type * as auth from "../auth.js";
 import type * as battles from "../battles.js";
 import type * as http from "../http.js";
+import type * as lobby from "../lobby.js";
 import type * as profiles from "../profiles.js";
 import type * as users from "../users.js";
 
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   battles: typeof battles;
   http: typeof http;
+  lobby: typeof lobby;
   profiles: typeof profiles;
   users: typeof users;
 }>;

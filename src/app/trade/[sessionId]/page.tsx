@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -17,6 +17,8 @@ import { LayoutSelector } from "@/components/trade/LayoutSelector";
 import { OpenPositionsTable } from "@/components/trade/OpenPositionsTable";
 import { PlaceOrderDialog } from "@/components/trade/PlaceOrderDialog";
 import { QuickBuySellPanel } from "@/components/trade/QuickBuySellPanel";
+import { RulesChips } from "@/components/trade/RulesChips";
+import { SubmitFinalDialog } from "@/components/trade/SubmitFinalDialog";
 import {
   Tabs,
   TabsContent,
@@ -30,6 +32,12 @@ import {
   formatPercent,
 } from "@/lib/analytics/stats";
 import { BundledDataProvider } from "@/lib/data/BundledDataProvider";
+import {
+  attemptEventQueue,
+  type AppendEventFn,
+} from "@/lib/events/AttemptEventQueue";
+import { replayEvents } from "@/lib/events/AttemptReducer";
+import type { AttemptEvent } from "@/lib/events/AttemptEvent";
 import { sessionRepository } from "@/lib/repository/SessionRepository";
 import { tradeRepository } from "@/lib/repository/TradeRepository";
 import { useLayoutStore, selectActiveInstrument } from "@/stores/layoutStore";
@@ -50,6 +58,81 @@ import type { Id } from "../../../../convex/_generated/dataModel";
  */
 const MASTER_TIMEFRAME_MINUTES = 1;
 const SOURCE_RESOLUTION = "1";
+
+/**
+ * v2.3 sub-phase 2B: convert the reducer's canonical state back into
+ * orderStore's runtime shape. The reducer tracks the minimum needed
+ * for replay; orderStore carries some live fields (unrealizedPnl,
+ * sessionId, status) that get filled in here. The chart re-marks
+ * unrealizedPnl on the next bar event, so we initialize it to 0.
+ */
+function hydrateOrderStoreFromReducer(
+  reducerState: import("@/lib/events/AttemptReducer").ReducerState,
+  sessionId: string,
+): void {
+  const openPositions = Object.values(reducerState.openPositions).map(
+    (p) => ({
+      id: p.id,
+      sessionId,
+      instrument: p.instrument,
+      side: p.side,
+      size: p.size,
+      entryPrice: p.entryPrice,
+      entryTime: p.entryTime,
+      takeProfit: p.takeProfit,
+      stopLoss: p.stopLoss,
+      unrealizedPnl: 0,
+      realizedPnl: 0,
+      commission: 0,
+      status: "open" as const,
+    }),
+  );
+  const pendingOrders = Object.values(reducerState.pendingOrders).map(
+    (o) => ({
+      id: o.id,
+      sessionId,
+      instrument: o.instrument,
+      side: o.side,
+      type: o.type,
+      size: o.size,
+      limitPrice: o.limitPrice,
+      stopPrice: o.stopPrice,
+      takeProfit: o.takeProfit,
+      stopLoss: o.stopLoss,
+      status: "pending" as const,
+      createdAt: 0,
+    }),
+  );
+  // closedTrades from the reducer carry the canonical record; map to
+  // the Trade shape orderStore + tradeRepository expect.
+  const closedTrades = reducerState.closedTrades.map((t) => ({
+    id: `replay-${t.positionId}`,
+    sessionId,
+    instrument: t.instrument,
+    side: t.side,
+    size: t.size,
+    entryPrice: t.entryPrice,
+    entryTime: t.entryTime,
+    exitPrice: t.closePrice,
+    exitTime: t.closeTime,
+    // orderStore Trade.pnl is NET; reducer realizedPnl is GROSS.
+    pnl: t.realizedPnl - t.commission,
+    pips: 0, // recomputed lazily if a UI reads it; not used by reducer math
+    commission: t.commission,
+    duration: t.closeTime - t.entryTime,
+    closeReason: t.closeReason,
+  }));
+  // We intentionally OVERWRITE existing state (Dexie's restoration)
+  // with the Convex-canonical replay. Single-player / local-battle
+  // sessions skip this code path entirely.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useOrderStore } = require("@/stores/orderStore") as typeof import("@/stores/orderStore");
+  useOrderStore.setState({
+    openPositions,
+    pendingOrders,
+    closedTrades,
+  });
+}
 
 export default function TradeSessionPage({
   params,
@@ -101,8 +184,22 @@ export default function TradeSessionPage({
   // the layoutStore is initialized (boot has not completed yet).
   const activePaneInstrument = useLayoutStore(selectActiveInstrument);
 
+  // v2.3 sub-phase 2B: hooks declared early so the boot useEffect can
+  // capture them in its closure without tripping the
+  // react-hooks/immutability TDZ check.
+  const submitServerAttempt = useMutation(api.battles.submitAttempt);
+  const appendEventMut = useMutation(api.attempts.appendEvent);
+  const markCompletedMut = useMutation(api.attempts.markCompleted);
+  const convex = useConvex();
+
   // Boot the session: load from Dexie, fetch bars (one or many), seed the
   // engines via MasterClock, hardcode-init the layout from instruments.
+  // v2.3 sub-phase 2B: when session.attemptId is set (server-battle path),
+  // also fetch the Convex event log + replay through AttemptReducer to
+  // restore canonical state, then initialize the AttemptEventQueue with
+  // the attempt's lastEventSeq so subsequent enqueues append at the
+  // correct position. Dexie's per-2s persistence remains the
+  // same-browser fast path; Convex is the cross-browser source of truth.
   useEffect(() => {
     let cancelled = false;
     const key = `${sessionId}/${SOURCE_RESOLUTION}`;
@@ -203,6 +300,87 @@ export default function TradeSessionPage({
           .getState()
           .initFromInstruments(instruments, active.layoutState);
 
+        // v2.3 sub-phase 2B: hydrate from the Convex event log when the
+        // session is bound to a server attempt. Replay all events
+        // through the pure reducer to derive canonical state, then
+        // overwrite orderStore + balance with the result. The Dexie
+        // restoration above already painted the chart instantly; this
+        // reconciles against the server's source of truth.
+        if (active.attemptId) {
+          try {
+            const events = (await convex.query(api.attempts.listEvents, {
+              attemptId: active.attemptId as Id<"battleAttempts">,
+            })) as Array<{
+              seq: number;
+              type: string;
+              payload: AttemptEvent;
+              time: number;
+            }>;
+            const sorted = [...events].sort((a, b) => a.seq - b.seq);
+            if (sorted.length > 0) {
+              // The payload field carries the full event (we stored
+              // the entire event as `payload` in appendEvent). Replay
+              // through the reducer to derive canonical state.
+              const replayPayloads = sorted.map((e) => e.payload);
+              const reducerState = replayEvents(replayPayloads);
+              hydrateOrderStoreFromReducer(reducerState, sessionId);
+              useSessionStore.setState({ balance: reducerState.balance });
+            }
+            // Initialize queue at the next-seq the server expects.
+            // Idempotent for same attemptId — preserves pending events.
+            attemptEventQueue.initialize(
+              active.attemptId,
+              sorted.length === 0 ? -1 : sorted[sorted.length - 1].seq,
+            );
+            // v2.3 sub-phase 2B: brand-new attempt has an empty log.
+            // The reducer requires `start` as the first event, so
+            // enqueue it now from session.battleSnapshot. Subsequent
+            // user actions will append seq 1, 2, … via orderStore.
+            //
+            // Idempotency guard against React StrictMode / HMR double-
+            // boot: only enqueue start when the queue's nextSeq is
+            // still 0 (truly fresh). If a prior boot run already
+            // enqueued start, nextSeq is 1+, and we'd otherwise
+            // enqueue a SECOND start which the reducer would later
+            // reject with "Duplicate 'start' event at seq 1" on
+            // resume replay. Race scenario: run 1 enqueues seq 0
+            // (still flushing); run 2 fetches events=[] because
+            // run 1's flush hasn't landed; without this guard, run 2
+            // would enqueue seq 1 as a second start.
+            if (
+              sorted.length === 0 &&
+              attemptEventQueue.getState().nextSeq === 0
+            ) {
+              const snap = active.battleSnapshot as
+                | {
+                    rules?: {
+                      maxDrawdownPct?: number;
+                      maxLossPerTradePct?: number;
+                      requireStopLoss?: boolean;
+                      profitTargetPct?: number;
+                    };
+                  }
+                | undefined;
+              attemptEventQueue.enqueue({
+                type: "start",
+                time: active.startBarTime,
+                startingBalance: active.startingBalance,
+                battleId: active.battleId ?? "",
+                instruments,
+                rules: snap?.rules ?? {},
+              });
+            }
+          } catch (e) {
+            // Convex unavailable / auth issue — fall back to Dexie-only
+            // mode. The user can still trade; events just won't sync
+            // until the queue is bound on a successful boot.
+            console.warn(
+              "Failed to hydrate from Convex event log; using Dexie state",
+              e,
+            );
+          }
+        }
+
         if (!cancelled) setBootedFor(key);
       } catch (err) {
         if (!cancelled) setBootError((err as Error).message);
@@ -220,7 +398,7 @@ export default function TradeSessionPage({
       useReplayStore.getState().dispose();
       useLayoutStore.getState().reset();
     };
-  }, [sessionId]);
+  }, [sessionId, convex]);
 
   const symbol = activePaneInstrument ?? session?.instrument ?? "";
 
@@ -267,9 +445,104 @@ export default function TradeSessionPage({
     symbol,
   });
 
-  const submitServerAttempt = useMutation(api.battles.submitAttempt);
+  // v2.3 sub-phase 2B: bind the AttemptEventQueue's appendEvent
+  // mutation to the live Convex client. The queue then flushes
+  // enqueued events through this binding. setAppendMutation is
+  // safe to call repeatedly — the queue swallows null on unmount
+  // so an in-flight retry doesn't try to write through a stale
+  // mutation reference.
+  useEffect(() => {
+    const fn: AppendEventFn = async (args) => {
+      await appendEventMut({
+        attemptId: args.attemptId as Id<"battleAttempts">,
+        seq: args.seq,
+        type: args.type,
+        payload: args.payload,
+        time: args.time,
+      });
+    };
+    attemptEventQueue.setAppendMutation(fn);
+    return () => attemptEventQueue.setAppendMutation(null);
+  }, [appendEventMut]);
 
-  const onExitSession = async () => {
+  /**
+   * v2.3: non-destructive Exit. Pause the replay, flush any
+   * pending events to Convex, and navigate to the dashboard. The
+   * Session row stays `status: "active"` and the Convex attempt
+   * stays `status: "in-flight"` — re-entering /trade/[sessionId]
+   * picks up where we left off.
+   */
+  const onExit = async () => {
+    useReplayStore.getState().pause();
+    // Best-effort drain. If a transient error makes the flush stall,
+    // events will retry next time the queue is initialized — the
+    // unflushed buffer is in-memory only at v2.3.
+    await attemptEventQueue.flush();
+    router.push("/dashboard");
+  };
+
+  /**
+   * v2.3: destructive Submit Final. Compute final stats, enqueue a
+   * `submit-final` event, drain the queue, then call markCompleted
+   * server-side and the existing endSession path (which writes the
+   * BattleAttempt row + flips the session to `status: "ended"`).
+   */
+  const onSubmitFinal = async () => {
+    const session = useSessionStore.getState().activeSession;
+    const balance = useSessionStore.getState().balance;
+    if (!session) return;
+
+    // Compute final stats from orderStore's closed trades for this session.
+    const allClosed = useOrderStore.getState().closedTrades;
+    const sessionTrades = allClosed.filter((t) => t.sessionId === session.id);
+    const wins = sessionTrades.filter((t) => t.pnl > 0).length;
+    const winRate = sessionTrades.length > 0 ? (wins / sessionTrades.length) * 100 : 0;
+    const pnlPct =
+      session.startingBalance > 0
+        ? ((balance - session.startingBalance) / session.startingBalance) * 100
+        : 0;
+    const completedAt =
+      useReplayStore.getState().currentBarTime || Math.floor(Date.now() / 1000);
+
+    // Enqueue submit-final event before draining so the server log
+    // ends with the canonical finalize event. Pause first so no
+    // further bar-tick events come after.
+    useReplayStore.getState().pause();
+    attemptEventQueue.enqueue({
+      type: "submit-final",
+      time: completedAt,
+      finalBalance: balance,
+      pnlPct,
+      trades: sessionTrades.length,
+      winRate,
+    });
+    await attemptEventQueue.flush();
+
+    // Mark completed server-side (Convex). Only if this session has a
+    // bound attemptId (server-battle path).
+    if (session.attemptId) {
+      try {
+        await markCompletedMut({
+          attemptId: session.attemptId as Id<"battleAttempts">,
+          finalBalance: balance,
+          pnlPct,
+          trades: sessionTrades.length,
+          winRate,
+          disqualified: false,
+          completedAt,
+        });
+      } catch (e) {
+        toast.error(
+          `Failed to lock attempt server-side: ${(e as Error).message}`,
+        );
+        // Don't return — still call endSession so the local state
+        // matches the user's intent. The discrepancy can be reconciled
+        // on next boot via the event log.
+      }
+    }
+
+    // Continue with the existing endSession path (writes BattleAttempt,
+    // flips session.status to "ended", triggers SessionEndedOverlay).
     await useSessionStore.getState().endSession({
       submitToServer: async (data) => {
         await submitServerAttempt({
@@ -284,9 +557,11 @@ export default function TradeSessionPage({
         });
       },
     });
-    toast.success("Session ended.");
+    toast.success("Attempt submitted.");
     router.push("/dashboard");
   };
+
+  const [submitFinalOpen, setSubmitFinalOpen] = useState(false);
 
   const loading = bootedFor !== `${sessionId}/${SOURCE_RESOLUTION}` && !bootError;
 
@@ -310,6 +585,18 @@ export default function TradeSessionPage({
                 : session.instrument}
             </span>
           )}
+          {/* v2.3 sub-phase 2B: rules from the active battle, shown
+              inline so joiners (and creators) can see the constraints
+              they're trading under without leaving the trade view.
+              Renders nothing for single-player sessions or when no
+              rules are configured. */}
+          <RulesChips
+            rules={
+              (session?.battleSnapshot as
+                | { rules?: import("@/types/battle").Battle["rules"] }
+                | undefined)?.rules
+            }
+          />
         </div>
         {/* v2.2.5α: layout selector — only meaningful for multi-asset
             sessions. Single-instrument sessions hide it since 1-pane is
@@ -385,7 +672,14 @@ export default function TradeSessionPage({
           <ScrubberBar className="shrink-0" />
         </section>
 
-        {sidebarOpen && <AccountSidebar onExit={onExitSession} />}
+        {sidebarOpen && (
+          <AccountSidebar
+            onExit={onExit}
+            onSubmitFinal={
+              session?.attemptId ? () => setSubmitFinalOpen(true) : undefined
+            }
+          />
+        )}
 
         <button
           onClick={() => setSidebarOpen((v) => !v)}
@@ -410,6 +704,12 @@ export default function TradeSessionPage({
           defaultSize={1}
         />
       )}
+
+      <SubmitFinalDialog
+        open={submitFinalOpen}
+        onOpenChange={setSubmitFinalOpen}
+        onConfirm={onSubmitFinal}
+      />
 
       {showEndedOverlay && (
         <SessionEndedOverlay

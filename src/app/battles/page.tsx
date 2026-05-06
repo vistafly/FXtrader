@@ -23,6 +23,9 @@ interface BattleWithAttempts {
   attempts: BattleAttempt[];
   source: BattleSource;
   visibility?: "public" | "invite-only";
+  /** v2.3: server-side broadcast match-start timestamp (Date.now() ms).
+   *  Drives the lobby/in-progress/ended status badge on the BattleCard. */
+  startedAt?: number;
 }
 
 export default function BattlesLobbyPage() {
@@ -130,6 +133,7 @@ export default function BattlesLobbyPage() {
         })),
         source: "server",
         visibility: battle.visibility,
+        startedAt: battle.startedAt,
       });
     };
     for (const row of myServerBattles) pushServer(row.battle, row.attempts);
@@ -191,13 +195,14 @@ export default function BattlesLobbyPage() {
         <EmptyState onCreate={() => setCreateOpen(true)} />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map(({ battle, attempts, source, visibility }) => (
+          {filtered.map(({ battle, attempts, source, visibility, startedAt }) => (
             <BattleCard
               key={`${source}-${battle.id}`}
               battle={battle}
               attempts={attempts}
               source={source}
               visibility={visibility}
+              startedAt={startedAt}
             />
           ))}
           {filtered.length === 0 && (

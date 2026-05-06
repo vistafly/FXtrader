@@ -40,6 +40,19 @@ export interface Session {
    *  before v2.2.5 don't have one and the app defaults from battle.instruments. */
   layoutState?: SessionLayoutState;
   /**
+   * v2.3: Convex `battleAttempts` row id, set when the session was started
+   * against a server battle and `startAttempt` succeeded. Drives the
+   * resume path on /trade boot — the trade page fetches the event log
+   * for this attemptId and replays through `AttemptReducer` to
+   * reconstruct canonical state. Absent for local-battle and single-
+   * player sessions.
+   *
+   * Stored as a plain string to keep `types/` free of Convex imports —
+   * the trade page narrows it via `as Id<"battleAttempts">` at the
+   * Convex API boundary.
+   */
+  attemptId?: string;
+  /**
    * v2.2.5α: snapshot of the battle this session attaches to. Stored at
    * startSession time so loadSession can restore the rules + starting
    * balance without a fetch — critical for SERVER battles, whose row

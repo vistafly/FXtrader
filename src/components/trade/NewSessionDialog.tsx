@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -71,6 +72,10 @@ export function NewSessionDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Start a new session</DialogTitle>
+          <DialogDescription className="sr-only">
+            Choose an instrument, starting balance, and start time for a new
+            replay session.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="grid gap-4">
           <label className="grid gap-1">

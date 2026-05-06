@@ -1,19 +1,35 @@
 "use client";
 
+import { Flag, LogOut } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { selectFreeMargin, useSessionStore } from "@/stores/sessionStore";
 import { useReplayStore } from "@/stores/replayStore";
 
 interface Props {
+  /**
+   * v2.3: non-destructive. Pauses the replay and returns to dashboard;
+   * the attempt remains in-flight on the server and will resume from
+   * the same bar/balance/positions/orders state next time the user
+   * enters this session. NO finalize, NO leaderboard write.
+   */
   onExit: () => void;
+  /**
+   * v2.3: destructive. Locks the attempt result, removes it from
+   * in-flight, finalizes the leaderboard row. Caller is responsible
+   * for showing a confirm modal before invoking. Optional — when
+   * omitted (single-player / local sessions), the Submit Final
+   * button is hidden.
+   */
+  onSubmitFinal?: () => void;
 }
 
 const moneyFmt = (n: number) =>
   (n >= 0 ? "$" : "-$") +
   Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function AccountSidebar({ onExit }: Props) {
+export function AccountSidebar({ onExit, onSubmitFinal }: Props) {
   const session = useSessionStore((s) => s.activeSession);
   const balance = useSessionStore((s) => s.balance);
   const equity = useSessionStore((s) => s.equity);
@@ -84,14 +100,30 @@ export function AccountSidebar({ onExit }: Props) {
         )}
       </div>
 
-      <div className="mt-auto pt-4">
+      {/* v2.3: two distinct actions. "Exit" is non-destructive — pauses
+          + returns to dashboard, attempt stays resumable. "Submit Final"
+          is destructive — locks the attempt result. The visual hierarchy
+          (outline vs primary destructive, icon distinction) is intended
+          to make the destructive action unambiguous at a glance. */}
+      <div className="mt-auto flex flex-col gap-2 pt-4">
         <Button
-          variant="destructive"
+          variant="outline"
           className="w-full"
           onClick={onExit}
         >
-          Exit session
+          <LogOut className="mr-2 h-4 w-4" />
+          Exit
         </Button>
+        {onSubmitFinal && (
+          <Button
+            variant="destructive"
+            className="w-full"
+            onClick={onSubmitFinal}
+          >
+            <Flag className="mr-2 h-4 w-4" />
+            Submit Final
+          </Button>
+        )}
       </div>
     </aside>
   );

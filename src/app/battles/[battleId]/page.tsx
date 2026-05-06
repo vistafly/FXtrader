@@ -1,14 +1,16 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, Copy, Globe, Lock, Plus, Swords, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { AbandonAttemptDialog } from "@/components/battles/AbandonAttemptDialog";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { Leaderboard } from "@/components/battles/Leaderboard";
+import { WaitingRoom } from "@/components/battles/WaitingRoom";
 import { ErrorBoundary } from "@/components/ErrorFallback";
 import { Button } from "@/components/ui/button";
 import { formatPercent } from "@/lib/analytics/stats";
@@ -18,6 +20,7 @@ import {
   type BattleSource,
 } from "@/lib/battles/inviteCode";
 import { battleRepository } from "@/lib/repository/BattleRepository";
+import { sessionRepository } from "@/lib/repository/SessionRepository";
 import { useOrderStore } from "@/stores/orderStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { Battle, BattleAttempt } from "@/types/battle";
@@ -73,6 +76,35 @@ export default function BattleDetailPage({
   }, [parsed.id, parsed.source]);
 
   const [starting, setStarting] = useState(false);
+  const [startingLabel, setStartingLabel] = useState("Starting…");
+  const [abandonOpen, setAbandonOpen] = useState(false);
+
+  // v2.3 sub-phase 2B: D2 single-attempt enforcement. For server
+  // battles, query whether the user already has an in-flight attempt.
+  // The Start button becomes "Resume" when one exists. "Abandon
+  // attempt" is offered as the explicit reset path (with battle-name
+  // typing friction in the modal).
+  const activeAttempt = useQuery(
+    api.attempts.getActiveAttempt,
+    parsed.source === "server"
+      ? { battleId: parsed.id as Id<"battles"> }
+      : "skip",
+  );
+  const startAttemptMut = useMutation(api.attempts.startAttempt);
+  const markAbandonedMut = useMutation(api.attempts.markAbandoned);
+  const startMatchMut = useMutation(api.lobby.startMatch);
+
+  // v2.3 sub-phase 2B: identify the current user so we can decide
+  // creator vs joiner UX in the waiting room.
+  const myProfile = useQuery(
+    api.profiles.getMyProfile,
+    parsed.source === "server" ? {} : "skip",
+  );
+
+  // v2.3 sub-phase 2B: live battle row for server battles. We
+  // already have `serverBattle` from above, but its query result
+  // includes `startedAt` which the WaitingRoom reads to auto-launch
+  // joiners when the host clicks Start match.
 
   // Captured at mount so render-time compares are pure. Expiration display
   // is approximate; users can refresh for an updated countdown.
@@ -157,12 +189,104 @@ export default function BattleDetailPage({
   const onNewAttempt = async () => {
     if (view.state !== "loaded") return;
     if (starting) return;
+    setStartingLabel("Starting…");
     setStarting(true);
     try {
       useOrderStore.getState().resetForSession();
       // v2.2.5α: pass the full instruments[] when present so the trade view
       // boots all engines. Falls back to single instrument for v1 / legacy
       // single-asset battles.
+      const instruments =
+        view.battle.instruments && view.battle.instruments.length > 0
+          ? view.battle.instruments
+          : [view.battle.instrument];
+
+      // v2.3 sub-phase 2B: for server battles, register the attempt
+      // with Convex first. D2 hard block — startAttempt rejects if an
+      // in-flight row already exists for this user+battle. We catch
+      // that case here so the UI can surface a "Resume or Abandon?"
+      // toast instead of crashing.
+      let attemptId: string | undefined;
+      if (view.source === "server") {
+        // Display-name snapshot for the leaderboard. The server-side
+        // serverBattle is the source of truth here (the local-shaped
+        // Battle has no createdBySnapshot field). Production UI reads
+        // the live displayName from convex/profiles.ts at leaderboard
+        // render; this is the fallback rendered when the live join
+        // fails (renamed user, etc).
+        const displayName =
+          (serverBattle as { createdBySnapshot?: string } | null | undefined)
+            ?.createdBySnapshot ?? "player";
+        try {
+          attemptId = (await startAttemptMut({
+            battleId: parsed.id as Id<"battles">,
+            displayNameSnapshot: displayName,
+            startingBalance: view.battle.startingBalance,
+          })) as unknown as string;
+        } catch (err) {
+          const e = err as { data?: { kind?: string }; message?: string };
+          if (e?.data?.kind === "attempt-already-in-flight") {
+            // Defensive — should be caught by the Resume button gate
+            // upstream, but the query may be stale. Surface and bail.
+            toast.error("Resume your existing attempt or abandon it first.");
+            setStarting(false);
+            return;
+          }
+          throw err;
+        }
+      }
+
+      const session = await useSessionStore.getState().startSession({
+        name: `${view.battle.name} · attempt`,
+        instrument: instruments[0],
+        instruments,
+        startBarTime: view.battle.startBarTime,
+        startingBalance: view.battle.startingBalance,
+        battle: view.battle,
+        battleSource: view.source,
+      });
+
+      // Persist attemptId on the local Session row so the trade
+      // page's boot effect can locate the attempt and own the queue
+      // lifecycle from there. The battle page does NOT touch the
+      // event queue — keeping that work on the trade page avoids
+      // hangs on `await flush()` when the Convex mutation is
+      // pending auth/connection handshake at click time.
+      if (attemptId) {
+        const updated = { ...session, attemptId };
+        await sessionRepository.put(updated);
+        useSessionStore.setState({ activeSession: updated });
+      }
+
+      router.push(`/trade/${session.id}`);
+    } catch (err) {
+      toast.error(`Could not start attempt: ${(err as Error).message}`);
+      setStarting(false);
+    }
+  };
+
+  /**
+   * v2.3 sub-phase 2B: Resume. Find the local Session bound to the
+   * active attempt's id and route to it. If no local row matches
+   * (different browser, cleared cache), create a fresh Session that
+   * the trade page will then hydrate from the Convex event log.
+   */
+  const onResume = async () => {
+    if (view.state !== "loaded") return;
+    if (!activeAttempt) return;
+    if (starting) return;
+    setStartingLabel("Resuming…");
+    setStarting(true);
+    try {
+      const all = await sessionRepository.list();
+      const match = all.find((s) => s.attemptId === activeAttempt._id);
+      if (match) {
+        router.push(`/trade/${match.id}`);
+        return;
+      }
+      // Cross-browser resume: spin up a fresh Session row with the
+      // attemptId set. Trade page boot will fetch the event log and
+      // replay through the reducer to derive canonical state.
       const instruments =
         view.battle.instruments && view.battle.instruments.length > 0
           ? view.battle.instruments
@@ -176,12 +300,65 @@ export default function BattleDetailPage({
         battle: view.battle,
         battleSource: view.source,
       });
+      const updated = { ...session, attemptId: activeAttempt._id };
+      await sessionRepository.put(updated);
+      useSessionStore.setState({ activeSession: updated });
       router.push(`/trade/${session.id}`);
     } catch (err) {
-      toast.error(`Could not start attempt: ${(err as Error).message}`);
+      toast.error(`Could not resume attempt: ${(err as Error).message}`);
       setStarting(false);
     }
   };
+
+  const onAbandonConfirm = async () => {
+    if (!activeAttempt) return;
+    try {
+      await markAbandonedMut({
+        attemptId: activeAttempt._id,
+      });
+      toast.success("Attempt abandoned. You can start a new one.");
+    } catch (err) {
+      toast.error(`Could not abandon attempt: ${(err as Error).message}`);
+    }
+  };
+
+  /**
+   * v2.3 sub-phase 2B: creator-only "Start match" broadcast.
+   * Flips battle.startedAt; reactive subscribers (joiners' useQuery
+   * on serverBattle) pick it up and auto-launch via WaitingRoom's
+   * onLaunch callback.
+   */
+  const onStartMatch = async () => {
+    if (parsed.source !== "server") return;
+    await startMatchMut({ battleId: parsed.id as Id<"battles"> });
+    // The auto-launch effect fires on the local creator too via the
+    // same startedAt-watch, so we don't manually call onNewAttempt
+    // here — single code path keeps creator + joiner symmetric.
+  };
+
+  /**
+   * Unified launch path used by WaitingRoom. Resume if there's an
+   * in-flight attempt, else create one. Same logic as the
+   * standalone Resume / New attempt buttons; refactored here so
+   * the WaitingRoom can call it on broadcast launch.
+   */
+  const onLaunch = () => {
+    if (activeAttempt) {
+      void onResume();
+    } else {
+      void onNewAttempt();
+    }
+  };
+
+  // v2.3 sub-phase 2B: the prior non-creator auto-redirect was
+  // reverted — caused a page-unresponsive in some cases and the
+  // intended UX is closer to a waiting-room lobby (per the
+  // references/waiting-room.png reference). Both creator and joiner
+  // now see this landing; the page is laid out as a lobby with
+  // rules + participants visible alongside the action buttons.
+  // Synchronized "match start" broadcast (creator clicks Start →
+  // all participants auto-launch into trade) is sub-phase 4 work
+  // when the participants/online infrastructure lands.
 
   const copyInviteLink = async () => {
     if (view.state !== "loaded" || view.source !== "server" || !view.inviteCode) {
@@ -223,6 +400,51 @@ export default function BattleDetailPage({
         ? `Expires ${formatRelativeTime(view.expiresAt, renderedAtMs)}`
         : "Expired"
       : null;
+
+  // v2.3 sub-phase 2B: server battles render the immersive WaitingRoom.
+  // Local battles keep the simple landing (no lobby concept; you're
+  // always alone in a local-Dexie session).
+  if (view.source === "server" && view.state === "loaded") {
+    const myUserId = myProfile?.userId;
+    const creatorId = (
+      serverBattle as { createdBy?: string } | null | undefined
+    )?.createdBy;
+    const startedAt =
+      (serverBattle as { startedAt?: number } | null | undefined)?.startedAt;
+    const isCreator = !!myUserId && !!creatorId && myUserId === creatorId;
+    return (
+      <>
+        <WaitingRoom
+          battleId={parsed.id as Id<"battles">}
+          battleName={view.battle.name}
+          instruments={
+            view.battle.instruments && view.battle.instruments.length > 0
+              ? view.battle.instruments
+              : [view.battle.instrument]
+          }
+          durationMinutes={view.battle.durationMinutes ?? 0}
+          startingBalance={view.battle.startingBalance}
+          maxParticipants={view.battle.maxParticipants ?? 0}
+          visibility={view.visibility ?? "invite-only"}
+          inviteCode={view.inviteCode}
+          rules={view.battle.rules}
+          startedAt={startedAt}
+          isCreator={isCreator}
+          onLaunch={onLaunch}
+          onStartMatch={onStartMatch}
+          copyInviteLink={copyInviteLink}
+          launching={starting}
+          launchingLabel={startingLabel}
+        />
+        <AbandonAttemptDialog
+          open={abandonOpen}
+          onOpenChange={setAbandonOpen}
+          battleName={view.battle.name}
+          onConfirm={onAbandonConfirm}
+        />
+      </>
+    );
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-10">
@@ -288,10 +510,44 @@ export default function BattleDetailPage({
               Copy invite link
             </Button>
           )}
-          <Button size="lg" onClick={onNewAttempt} disabled={starting}>
-            <Plus className="mr-2 h-4 w-4" />
-            {starting ? "Starting…" : "New attempt"}
-          </Button>
+          {/* v2.3 sub-phase 2B: D2 single-attempt enforcement. When
+              a server-side in-flight attempt exists for this battle,
+              the primary CTA flips to "Resume" + an "Abandon" link
+              appears alongside it. The Abandon path opens a modal
+              that requires the battle name typed verbatim — friction
+              that prevents reflexive click-throughs from destroying
+              real time spent.
+              While `starting` is true, freeze the button to a stable
+              "Starting…" / "Resuming…" label that reflects the action
+              the user actually clicked — without this guard, the
+              activeAttempt query reactively flips after startAttempt
+              creates the row and the button morphs to "Resuming…"
+              mid-click, which reads as broken. */}
+          {starting ? (
+            <Button size="lg" disabled>
+              <Plus className="mr-2 h-4 w-4" />
+              {startingLabel}
+            </Button>
+          ) : activeAttempt ? (
+            <>
+              <Button size="lg" onClick={onResume}>
+                <Plus className="mr-2 h-4 w-4" />
+                Resume attempt
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAbandonOpen(true)}
+              >
+                Abandon
+              </Button>
+            </>
+          ) : (
+            <Button size="lg" onClick={onNewAttempt}>
+              <Plus className="mr-2 h-4 w-4" />
+              New attempt
+            </Button>
+          )}
           <UserMenu />
         </div>
       </header>
@@ -377,6 +633,15 @@ export default function BattleDetailPage({
       <ErrorBoundary label="Leaderboard">
         <Leaderboard attempts={view.attempts} />
       </ErrorBoundary>
+
+      {view.state === "loaded" && (
+        <AbandonAttemptDialog
+          open={abandonOpen}
+          onOpenChange={setAbandonOpen}
+          battleName={view.battle.name}
+          onConfirm={onAbandonConfirm}
+        />
+      )}
     </main>
   );
 }

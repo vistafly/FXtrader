@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -212,6 +213,10 @@ export function PlaceOrderDialog({ open, onOpenChange, side, symbol, defaultSize
           <DialogTitle className={cn("uppercase tracking-wide", side === "buy" ? "text-bull" : "text-bear")}>
             {side} {symbol}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Place a {side} order for {symbol} with optional limit/stop trigger
+            and SL/TP.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="grid gap-4">

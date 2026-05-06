@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -142,6 +143,10 @@ export function CreateBattleDialog({ open, onOpenChange }: Props) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-center text-xl">New Battle</DialogTitle>
+          <DialogDescription className="sr-only">
+            Configure a new trading battle with rules, instruments, duration,
+            and visibility.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="grid gap-5">
           <Field label="Battle Name *">

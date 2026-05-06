@@ -69,10 +69,33 @@ export default defineSchema({
     createdBy: v.id("users"),
     createdBySnapshot: v.string(),
     createdAt: v.number(),
+    // v2.3: broadcast match-start. When the creator clicks "Start
+    // match" in the lobby, this is set to Date.now(). All clients
+    // subscribed to this battle row reactively pick it up; joiners
+    // in the lobby auto-redirect to their trade view. Absent ⇒
+    // lobby is open (waiting for participants).
+    startedAt: v.optional(v.number()),
   })
     .index("by_visibility", ["visibility"])
     .index("by_inviteCode", ["inviteCode"])
     .index("by_createdBy", ["createdBy"]),
+
+  // v2.3: real-time waiting-room presence. One row per (battleId,
+  // userId) currently in the lobby. Inserted on /battles/[battleId]
+  // mount, deleted on unmount or on match start. The
+  // `listLobbyMembers` query subscribed in the lobby UI is reactive,
+  // so users see each other arrive/leave without polling.
+  //
+  // joinedAt is a wall-clock timestamp; UI can derive "online" via
+  // freshness threshold (currently unused — presence ≡ row exists).
+  lobbyMembers: defineTable({
+    battleId: v.id("battles"),
+    userId: v.id("users"),
+    displayName: v.string(),
+    joinedAt: v.number(),
+  })
+    .index("by_battle", ["battleId"])
+    .index("by_battle_user", ["battleId", "userId"]),
 
   battleAttempts: defineTable({
     battleId: v.id("battles"),

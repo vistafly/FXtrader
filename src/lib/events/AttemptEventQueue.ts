@@ -99,8 +99,22 @@ export const attemptEventQueue = {
    * Begin tracking events for an attempt. `lastEventSeq` is the
    * server's current value (-1 for fresh attempts; the resume path
    * passes the value from the persisted battleAttempts row).
+   *
+   * Idempotent for the same attemptId: if we're re-mounting the
+   * trade page for the same attempt (e.g. HMR, route re-entry), do
+   * NOT clear pending events — they belong to this attempt and
+   * should still flush. Only bump `nextSeq` if the server has caught
+   * up further than us (cross-browser scenario).
    */
   initialize(attemptId: string, lastEventSeq: number) {
+    if (state.attemptId === attemptId) {
+      const expected = lastEventSeq + 1;
+      if (expected > state.nextSeq) {
+        state.nextSeq = expected;
+      }
+      notify();
+      return;
+    }
     state.attemptId = attemptId;
     state.nextSeq = lastEventSeq + 1;
     state.pending = [];
